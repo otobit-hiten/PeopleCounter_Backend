@@ -5,8 +5,7 @@ using PeopleCounter_Backend.Models;
 using PeopleCounter_Backend.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-
-
+builder.WebHost.UseUrls("http://localhost:5000");
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -19,8 +18,8 @@ builder.Services
         options.ExpireTimeSpan = TimeSpan.FromHours(12);
         options.SlidingExpiration = true;
         options.Cookie.HttpOnly = true;
-        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
-        options.Cookie.SameSite = SameSiteMode.None;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.None;
+        options.Cookie.SameSite = SameSiteMode.Lax;
 
         options.Events.OnRedirectToLogin = ctx =>
         {
@@ -68,7 +67,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-app.UseAuthentication();  
+app.UseAuthentication();
 app.UseAuthorization();
 app.UseDeveloperExceptionPage();
 app.MapControllers();

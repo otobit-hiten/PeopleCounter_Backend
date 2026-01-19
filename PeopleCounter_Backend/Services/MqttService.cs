@@ -52,7 +52,7 @@ namespace PeopleCounter_Backend.Services
 
                 byte[] payloadBytes = payloadSequence.ToArray();
                 var payload = Encoding.UTF8.GetString(payloadBytes);
-                _logger.LogInformation("MQTT Raw Payload: {Payload}",payload);
+                _logger.LogInformation("MQTT Raw Payload: {Payload}", payload);
 
                 var messages = JsonSerializer.Deserialize<List<MqttPayload>>(payload);
                 if (messages is null || messages.Count == 0)
@@ -83,12 +83,24 @@ namespace PeopleCounter_Backend.Services
 
                 await repo.InsertAsync(records);
 
-                foreach (var record in records)
+                var devices = await repo.GetLatestLogicalDevicesAsync();
+
+                foreach (var d in devices)
                 {
                     await _hubContext.Clients
-                        .Group($"building:{record.Location}")
-                        .SendAsync("SensorUpdated", record);
+                        .Group($"building:{d.Location}")
+                        .SendAsync("SensorUpdated", new
+                        {
+                            deviceId = d.DeviceId,
+                            location = d.Location,
+                            sublocation = d.SubLocation,
+                            inCount = d.InCount,
+                            outCount = d.OutCount,
+                            capacity = d.Capacity,
+                            eventTime = d.EventTime
+                        });
                 }
+
 
                 var summaries = await repo.GetBuildingSummaryAsync();
 
@@ -100,7 +112,8 @@ namespace PeopleCounter_Backend.Services
                 //await _hubContext.Clients.All.SendAsync("PeopleCountUpdated", records); 
 
             }
-            catch (Exception ex) {
+            catch (Exception ex)
+            {
                 _logger.LogError(ex, "MQTT message processing failed");
                 Debug.WriteLine($"MQTT PROCESS ERROR: {ex}");
             }
@@ -114,7 +127,7 @@ namespace PeopleCounter_Backend.Services
                 .WithClientId($"{_mqttOptions.ClientIdPrefix}{Guid.NewGuid()}")
                 .WithTcpServer(_mqttOptions.Host, _mqttOptions.Port)
                 .WithCredentials(_mqttOptions.Username, _mqttOptions.Password)
-                //.WithTlsOptions(tls => tls.UseTls())
+                .WithTlsOptions(tls => tls.UseTls())
                 .Build();
 
             await _client.ConnectAsync(options, ct);

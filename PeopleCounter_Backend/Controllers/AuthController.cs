@@ -114,5 +114,17 @@ namespace PeopleCounter_Backend.Controllers
                 Roles = roles
             });
         }
+
+        [Authorize(Roles = "admin")]
+        [HttpGet("admin")]
+        public IActionResult AdminEndpoint()
+        {
+            return Ok(new
+            {
+                Username = User.Identity!.Name,
+                Roles = User.FindAll(ClaimTypes.Role).Select(r => r.Value)
+            });
+        }
+
     }
 }

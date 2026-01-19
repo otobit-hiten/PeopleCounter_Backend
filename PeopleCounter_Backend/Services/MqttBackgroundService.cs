@@ -21,14 +21,14 @@ namespace PeopleCounter_Backend.Services
                 {
                     await Task.Delay(1000, stoppingToken);
                 }
-            }       
+            }
             catch (Exception ex)
             {
                 Debug.WriteLine($"MQTT startup failed: {ex}");
             }
 
-        await Task.Delay(Timeout.Infinite, stoppingToken);
-        
+            await Task.Delay(Timeout.Infinite, stoppingToken);
+
         }
         public override async Task StopAsync(CancellationToken cancellationToken)
         {

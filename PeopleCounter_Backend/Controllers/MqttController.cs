@@ -6,12 +6,13 @@ namespace PeopleCounter_Backend.Controllers
 {
     [ApiController]
     [Route("mqtt")]
-    public class MqttController: ControllerBase
+    public class MqttController : ControllerBase
     {
         private readonly MqttService _mqttService;
         private readonly PeopleCounterRepository _repository;
 
-        public MqttController(MqttService mqttService, PeopleCounterRepository repository) {
+        public MqttController(MqttService mqttService, PeopleCounterRepository repository)
+        {
             _mqttService = mqttService;
             _repository = repository;
         }
