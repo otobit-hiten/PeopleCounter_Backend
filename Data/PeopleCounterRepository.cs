@@ -1,5 +1,10 @@
-﻿using Microsoft.Data.SqlClient;
+﻿
+
+
+
+using Microsoft.Data.SqlClient;
 using PeopleCounter_Backend.Models;
+using System.Data;
 using System.Net.NetworkInformation;
 
 namespace PeopleCounter_Backend.Data
@@ -13,131 +18,54 @@ namespace PeopleCounter_Backend.Data
             _connectionString = configuration.GetConnectionString("DefaultConnection");
         }
 
-        public async Task InsertAsync(IEnumerable<PeopleCounter> records)
-        {
-            var sql = @"
-                INSERT INTO people_counter_log
-                (device_id,location,sublocation, in_count, out_count, capacity, event_time)
-                VALUES
-                (@device,@location,@sublocation ,@in, @out, @capacity, @time)";
-
-            using var conn = new SqlConnection(_connectionString);
-            await conn.OpenAsync();
-
-            foreach (var people in records)
-            {
-                using var cmd = new SqlCommand(sql, conn);
-
-                cmd.Parameters.AddWithValue("@device", people.DeviceId);
-                cmd.Parameters.AddWithValue("@location", people.Location);
-                cmd.Parameters.AddWithValue("@sublocation", people.SubLocation);
-                cmd.Parameters.AddWithValue("@in", people.InCount);
-                cmd.Parameters.AddWithValue("@out", people.OutCount);
-                cmd.Parameters.AddWithValue("@capacity", people.Capacity);
-                cmd.Parameters.AddWithValue("@time", people.EventTime);
-
-                await cmd.ExecuteNonQueryAsync();
-            }
-        }
-
-        public async Task<List<PeopleCounter>> GetLatestPerDeviceAsync()
-        {
-            var sql = @"
-                    SELECT
-                device_id,
-                location,
-                in_count,
-                out_count,
-                capacity,
-                event_time,
-                sublocation
-            FROM (
-                SELECT *,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY device_id
-                           ORDER BY created_at DESC
-                       ) AS rn
-                FROM people_counter_log
-            ) t
-            WHERE rn = 1
-            ORDER BY device_id";
-
-            var result = new List<PeopleCounter>();
-
-            using var conn = new SqlConnection(_connectionString);
-            using var cmd = new SqlCommand(sql, conn);
-
-            await conn.OpenAsync();
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
-            {
-                result.Add(new PeopleCounter
-                {
-                    DeviceId = reader.GetString(0),
-                    Location = reader.IsDBNull(1)
-                            ? null
-                            : reader.GetString(1),
-                    InCount = reader.GetInt32(2),
-                    OutCount = reader.GetInt32(3),
-                    Capacity = reader.GetInt32(4),
-                    EventTime = reader.GetDateTime(5),
-                    SubLocation = reader.GetString(6)
-                });
-            }
-
-            return result;
-        }
 
 
-        public async Task<List<BuildingSummary>> GetBuildingSummaryAsync()
-        {
-            var devices = await GetLatestLogicalDevicesAsync();
 
-            return devices
-                .GroupBy(d => d.Location)
-                .Select(g => new BuildingSummary(
-                    Building: g.Key,
-                    TotalIn: g.Sum(x => x.InCount),
-                    TotalOut: g.Sum(x => x.OutCount),
-                    TotalCapacity: g.Sum(x => x.Capacity)
-                ))
-                .ToList();
-        }
-
-        public async Task<List<PeopleCounter>> GetSensorsByBuildingAsync(string building)
-        {
-            var devices = await GetLatestLogicalDevicesAsync();
-
-            return devices
-                .Where(d => d.Location == building)
-                .ToList();
-        }
-
-        public async Task<string> GetBuildingByDevice(string deviceId)
+        public async Task<List<string>> GetAllDevicesAsync()
         {
             const string sql = @"
-        SELECT TOP 1 location
-        FROM people_counter_log
-        WHERE device_id = @deviceId
-        ORDER BY created_at DESC, id DESC;
-    ";
+                SELECT DISTINCT device_id
+                FROM people_counter_log
+                ORDER BY device_id";
+
+            var list = new List<string>();
 
             using var conn = new SqlConnection(_connectionString);
             using var cmd = new SqlCommand(sql, conn);
 
-            cmd.Parameters.AddWithValue("@deviceId", deviceId);
+            await conn.OpenAsync();
+            using var r = await cmd.ExecuteReaderAsync();
+
+            while (await r.ReadAsync())
+                list.Add(r.GetString(0));
+
+            return list;
+        }
+
+        public async Task<List<string>> GetAllLocationAsync()
+        {
+            const string sql = @"
+                SELECT DISTINCT location
+                 FROM people_counter_log
+                ORDER BY location";
+
+            var list = new List<string>();
+
+            using var conn = new SqlConnection(_connectionString);
+            using var cmd = new SqlCommand(sql, conn);
 
             await conn.OpenAsync();
+            using var r = await cmd.ExecuteReaderAsync();
 
-            var result = await cmd.ExecuteScalarAsync();
+            while (await r.ReadAsync())
+                list.Add(r.GetString(0));
 
-            if (result == null || result == DBNull.Value)
-                throw new InvalidOperationException(
-                    $"No building found for device '{deviceId}'");
-
-            return (string)result;
+            return list;
         }
+
+
+
+
 
 
         public async Task ResetDevice(string deviceId)
@@ -188,6 +116,411 @@ namespace PeopleCounter_Backend.Data
 
                 await cmd.ExecuteNonQueryAsync();
             }
+        }
+
+        public async Task ResetAllDevicesByBuildingAsync(string building)
+        {
+            const string sqlGetDevices = @"
+                        SELECT DISTINCT device_id
+                        FROM people_counter_log
+                WHERE location = @building;";
+
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            var deviceIds = new List<string>();
+
+            using (var cmd = new SqlCommand(sqlGetDevices, conn))
+            {
+                cmd.Parameters.AddWithValue("@building", building);
+
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    deviceIds.Add(reader.GetString(0));
+                }
+            }
+
+            if (deviceIds.Count == 0)
+                return;
+
+            foreach (var deviceId in deviceIds)
+            {
+                await ResetDevice(deviceId);
+            }
+        }
+
+
+
+
+
+
+
+
+        public async Task InsertAsync(IEnumerable<PeopleCounter> records)
+        {
+            var sql = @"
+                INSERT INTO people_counter_log
+                (device_id,location,sublocation, in_count, out_count, capacity, event_time)
+                VALUES
+                (@device,@location,@sublocation ,@in, @out, @capacity, @time)";
+
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            foreach (var people in records)
+            {
+                using var cmd = new SqlCommand(sql, conn);
+
+                cmd.Parameters.AddWithValue("@device", people.DeviceId);
+                cmd.Parameters.AddWithValue("@location", people.Location);
+                cmd.Parameters.AddWithValue("@sublocation", people.SubLocation);
+                cmd.Parameters.AddWithValue("@in", people.InCount);
+                cmd.Parameters.AddWithValue("@out", people.OutCount);
+                cmd.Parameters.AddWithValue("@capacity", people.Capacity);
+                cmd.Parameters.AddWithValue("@time", people.EventTime);
+
+                await cmd.ExecuteNonQueryAsync();
+            }
+        }
+
+        public async Task InsertDataAsync(IEnumerable<PeopleCounter> records)
+        {
+            var recordList = records.ToList();
+            if (recordList.Count == 0)
+            {
+                return;
+            }
+
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            var dataTable = new DataTable();
+
+            dataTable.Columns.Add("device_id", typeof(string));
+            dataTable.Columns.Add("location", typeof(string));
+            dataTable.Columns.Add("sublocation", typeof(string));
+            dataTable.Columns.Add("in_count", typeof(int));
+            dataTable.Columns.Add("out_count", typeof(int));
+            dataTable.Columns.Add("capacity", typeof(int));
+            dataTable.Columns.Add("event_time", typeof(DateTime));
+
+
+            foreach (var item in recordList)
+            {
+                dataTable.Rows.Add(
+                    item.DeviceId, item.Location ?? (object)DBNull.Value, item.SubLocation ?? (object)DBNull.Value,
+                    item.InCount, item.OutCount, item.Capacity, item.EventTime);
+            }
+            using var bulkCopy = new SqlBulkCopy(conn)
+            {
+                DestinationTableName = "people_counter_log",
+                BatchSize = 1000,
+                BulkCopyTimeout = 60,
+                EnableStreaming = true
+            };
+
+            bulkCopy.ColumnMappings.Add("device_id", "device_id");
+            bulkCopy.ColumnMappings.Add("location", "location");
+            bulkCopy.ColumnMappings.Add("sublocation", "sublocation");
+            bulkCopy.ColumnMappings.Add("in_count", "in_count");
+            bulkCopy.ColumnMappings.Add("out_count", "out_count");
+            bulkCopy.ColumnMappings.Add("capacity", "capacity");
+            bulkCopy.ColumnMappings.Add("event_time", "event_time");
+
+            await bulkCopy.WriteToServerAsync(dataTable);
+        }
+
+
+        public async Task<List<PeopleCounter>> GetLatestLogicalDeviceByIdsAysnc(List<string> deviceIds)
+        {
+            if (deviceIds == null || deviceIds.Count == 0)
+            {
+                return new List<PeopleCounter>();
+            }
+
+            const string sql = @"
+WITH latest_reset AS (
+    -- STEP 1: Get the most recent reset for each device
+    SELECT
+        device_id,
+        reset_in_count,
+        reset_out_count,
+        ROW_NUMBER() OVER (
+            PARTITION BY device_id      -- Separate numbering for each device
+            ORDER BY reset_time DESC    -- Newest first
+        ) AS rn
+    FROM people_counter_resets
+    WHERE device_id IN ({0})            -- Filter: only requested devices
+),
+latest_log AS (
+    -- STEP 2: Get the most recent log entry for each device
+    SELECT *,
+           ROW_NUMBER() OVER (
+               PARTITION BY device_id
+               ORDER BY created_at DESC, id DESC
+           ) AS rn
+    FROM people_counter_log
+    WHERE device_id IN ({0})            -- Filter: only requested devices
+)
+SELECT
+    l.device_id,
+    l.location,
+    l.sublocation,
+    l.event_time,
+
+    -- STEP 3: Calculate logical IN count (subtract reset if exists)
+    CASE
+        WHEN r.reset_in_count IS NULL THEN l.in_count
+        WHEN l.in_count < r.reset_in_count THEN l.in_count
+        ELSE l.in_count - r.reset_in_count
+    END AS logical_in,
+
+    -- STEP 4: Calculate logical OUT count
+    CASE
+        WHEN r.reset_out_count IS NULL THEN l.out_count
+        WHEN l.out_count < r.reset_out_count THEN l.out_count
+        ELSE l.out_count - r.reset_out_count
+    END AS logical_out,
+
+    -- STEP 5: Calculate people inside (IN - OUT), minimum 0
+    CASE
+        WHEN
+          (
+            (CASE
+                WHEN r.reset_in_count IS NULL THEN l.in_count
+                WHEN l.in_count < r.reset_in_count THEN l.in_count
+                ELSE l.in_count - r.reset_in_count
+             END)
+          -
+            (CASE
+                WHEN r.reset_out_count IS NULL THEN l.out_count
+                WHEN l.out_count < r.reset_out_count THEN l.out_count
+                ELSE l.out_count - r.reset_out_count
+             END)
+          ) < 0
+        THEN 0
+        ELSE
+          (
+            (CASE
+                WHEN r.reset_in_count IS NULL THEN l.in_count
+                WHEN l.in_count < r.reset_in_count THEN l.in_count
+                ELSE l.in_count - r.reset_in_count
+             END)
+          -
+            (CASE
+                WHEN r.reset_out_count IS NULL THEN l.out_count
+                WHEN l.out_count < r.reset_out_count THEN l.out_count
+                ELSE l.out_count - r.reset_out_count
+             END)
+          )
+    END AS inside,
+
+    l.capacity
+
+FROM latest_log l
+LEFT JOIN latest_reset r
+    ON l.device_id = r.device_id
+    AND r.rn = 1                       
+WHERE l.rn = 1;                         
+";
+
+            var result = new List<PeopleCounter>();
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            var parameters = new List<string>();
+
+            for (int i = 0; i < deviceIds.Count; i++)
+            {
+                parameters.Add($"@DeviceId{i}");
+            }
+            var parameterList = string.Join(",", parameters);
+            var finalSql = string.Format(sql, parameterList);
+            using var cmd = new SqlCommand(finalSql, conn);
+            for (int i = 0; i < deviceIds.Count; i++)
+            {
+                cmd.Parameters.AddWithValue($"@DeviceId{i}", deviceIds[i]);
+            }
+            using var reader = await cmd.ExecuteReaderAsync();
+
+
+            while (await reader.ReadAsync())
+            {
+                result.Add(new PeopleCounter
+                {
+                    DeviceId = reader.GetString(0),
+                    Location = reader.GetString(1),
+                    SubLocation = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    EventTime = reader.GetDateTime(3),
+                    InCount = reader.GetInt32(4),
+                    OutCount = reader.GetInt32(5),
+                    Capacity = reader.GetInt32(7)
+                });
+            }
+
+            return result;
+        }
+
+
+        public async Task<string> GetBuildingByDevice(string deviceId)
+        {
+            const string sql = @"
+        SELECT TOP 1 location
+        FROM people_counter_log
+        WHERE device_id = @deviceId
+        ORDER BY created_at DESC, id DESC;
+    ";
+
+            using var conn = new SqlConnection(_connectionString);
+            using var cmd = new SqlCommand(sql, conn);
+
+            cmd.Parameters.AddWithValue("@deviceId", deviceId);
+
+            await conn.OpenAsync();
+
+            var result = await cmd.ExecuteScalarAsync();
+
+            if (result == null || result == DBNull.Value)
+                throw new InvalidOperationException(
+                    $"No building found for device '{deviceId}'");
+
+            return (string)result;
+        }
+
+        public async Task<List<BuildingSummary>> GetBuildingSummaryAsync()
+        {
+            const string sql = @"
+WITH latest_reset AS (
+    -- Get latest reset for each device
+    SELECT
+        device_id,
+        reset_in_count,
+        reset_out_count,
+        ROW_NUMBER() OVER (
+            PARTITION BY device_id
+            ORDER BY reset_time DESC
+        ) AS rn
+    FROM people_counter_resets
+),
+latest_log AS (
+    -- Get latest log entry for each device
+    SELECT *,
+           ROW_NUMBER() OVER (
+               PARTITION BY device_id
+               ORDER BY created_at DESC, id DESC
+           ) AS rn
+    FROM people_counter_log
+)
+SELECT
+    l.location AS Building,
+    
+    -- Aggregate: Total IN across all devices in this building
+    SUM(
+        CASE
+            WHEN r.reset_in_count IS NULL THEN l.in_count
+            WHEN l.in_count < r.reset_in_count THEN l.in_count
+            ELSE l.in_count - r.reset_in_count
+        END
+    ) AS TotalIn,
+    
+    -- Aggregate: Total OUT across all devices in this building
+    SUM(
+        CASE
+            WHEN r.reset_out_count IS NULL THEN l.out_count
+            WHEN l.out_count < r.reset_out_count THEN l.out_count
+            ELSE l.out_count - r.reset_out_count
+        END
+    ) AS TotalOut,
+    
+    -- Aggregate: Total Capacity across all devices in this building
+    SUM(l.capacity) AS TotalCapacity
+
+FROM latest_log l
+LEFT JOIN latest_reset r
+    ON l.device_id = r.device_id
+    AND r.rn = 1
+WHERE l.rn = 1              -- Only latest entries
+GROUP BY l.location;        -- Group by building
+";
+
+            var result = new List<BuildingSummary>();
+
+            using var conn = new SqlConnection(_connectionString);
+            using var cmd = new SqlCommand(sql, conn);
+
+            await conn.OpenAsync();
+            using var reader = await cmd.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                result.Add(new BuildingSummary(
+                    Building: reader.GetString(0),
+                    TotalIn: reader.GetInt32(1),
+                    TotalOut: reader.GetInt32(2),
+                    TotalCapacity: reader.GetInt32(3)
+                ));
+            }
+
+            return result;
+        }
+
+        public async Task<List<PeopleCounter>> GetSensorsByBuildingAsync(string building)
+        {
+            var devices = await GetLatestLogicalDevicesAsync();
+
+            return devices
+                .Where(d => d.Location == building)
+                .ToList();
+        }
+
+        public async Task<List<PeopleCounter>> GetLatestPerDeviceAsync()
+        {
+            var sql = @"
+                    SELECT
+                device_id,
+                location,
+                in_count,
+                out_count,
+                capacity,
+                event_time,
+                sublocation
+            FROM (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY device_id
+                           ORDER BY created_at DESC
+                       ) AS rn
+                FROM people_counter_log
+            ) t
+            WHERE rn = 1
+            ORDER BY device_id";
+
+            var result = new List<PeopleCounter>();
+
+            using var conn = new SqlConnection(_connectionString);
+            using var cmd = new SqlCommand(sql, conn);
+
+            await conn.OpenAsync();
+            using var reader = await cmd.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                result.Add(new PeopleCounter
+                {
+                    DeviceId = reader.GetString(0),
+                    Location = reader.IsDBNull(1)
+                            ? null
+                            : reader.GetString(1),
+                    InCount = reader.GetInt32(2),
+                    OutCount = reader.GetInt32(3),
+                    Capacity = reader.GetInt32(4),
+                    EventTime = reader.GetDateTime(5),
+                    SubLocation = reader.GetString(6)
+                });
+            }
+
+            return result;
         }
 
         public async Task<List<PeopleCounter>> GetLatestLogicalDevicesAsync()
@@ -260,148 +593,106 @@ namespace PeopleCounter_Backend.Data
             return result;
         }
 
-
-        public async Task ResetAllDevicesByBuildingAsync(string building)
+        public async Task<PeopleCounter?> GetLatestLogicalDeviceAsync(string deviceId)
         {
-            const string sqlGetDevices = @"
-                        SELECT DISTINCT device_id
-                        FROM people_counter_log
-                WHERE location = @building;";
+            const string sql = @"
+    WITH latest_reset AS (
+        SELECT
+            reset_in_count,
+            reset_out_count
+        FROM people_counter_resets
+        WHERE device_id = @deviceId
+        ORDER BY created_at DESC
+        OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY
+    ),
+    latest_log AS (
+        SELECT TOP 1 *
+        FROM people_counter_log
+        WHERE device_id = @deviceId
+        ORDER BY created_at DESC, id DESC
+    )
+    SELECT
+        l.device_id,
+        l.location,
+        l.sublocation,
+        l.event_time,
 
-            using var conn = new SqlConnection(_connectionString);
-            await conn.OpenAsync();
+        CASE
+            WHEN r.reset_in_count IS NULL THEN l.in_count
+            WHEN l.in_count < r.reset_in_count THEN l.in_count
+            ELSE l.in_count - r.reset_in_count
+        END AS logical_in,
 
-            var deviceIds = new List<string>();
+        CASE
+            WHEN r.reset_out_count IS NULL THEN l.out_count
+            WHEN l.out_count < r.reset_out_count THEN l.out_count
+            ELSE l.out_count - r.reset_out_count
+        END AS logical_out,
 
-            using (var cmd = new SqlCommand(sqlGetDevices, conn))
-            {
-                cmd.Parameters.AddWithValue("@building", building);
+        CASE
+            WHEN
+              (
+                (CASE
+                    WHEN r.reset_in_count IS NULL THEN l.in_count
+                    WHEN l.in_count < r.reset_in_count THEN l.in_count
+                    ELSE l.in_count - r.reset_in_count
+                 END)
+              -
+                (CASE
+                    WHEN r.reset_out_count IS NULL THEN l.out_count
+                    WHEN l.out_count < r.reset_out_count THEN l.out_count
+                    ELSE l.out_count - r.reset_out_count
+                 END)
+              ) < 0
+            THEN 0
+            ELSE
+              (
+                (CASE
+                    WHEN r.reset_in_count IS NULL THEN l.in_count
+                    WHEN l.in_count < r.reset_in_count THEN l.in_count
+                    ELSE l.in_count - r.reset_in_count
+                 END)
+              -
+                (CASE
+                    WHEN r.reset_out_count IS NULL THEN l.out_count
+                    WHEN l.out_count < r.reset_out_count THEN l.out_count
+                    ELSE l.out_count - r.reset_out_count
+                 END)
+              )
+        END AS inside,
 
-                using var reader = await cmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    deviceIds.Add(reader.GetString(0));
-                }
-            }
-
-            if (deviceIds.Count == 0)
-                return;
-
-            foreach (var deviceId in deviceIds)
-            {
-                await ResetDevice(deviceId);
-            }
-        }
-
-
-        public async Task<List<SensorChartPointDto>> GetSensorChartAsync(
-            string deviceId,
-            DateTime from,
-            DateTime to,
-            string bucket)
-        {
-            var result = new List<SensorChartPointDto>();
-
-            var sql = @"
-            WITH resets AS (
-                SELECT
-                    device_id,
-                    reset_time,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY device_id
-                        ORDER BY reset_time
-                    ) AS segment_id
-                FROM people_counter_resets
-            ),
-
-            log_with_segment AS (
-                SELECT
-                    l.event_time,
-                    l.in_count,
-                    l.out_count,
-                    ISNULL(
-                        (
-                            SELECT MAX(r.segment_id)
-                            FROM resets r
-                            WHERE r.device_id = l.device_id
-                              AND r.reset_time <= l.event_time
-                        ),
-                        0
-                    ) AS segment_id
-                FROM people_counter_log l
-                WHERE l.device_id = @deviceId
-                  AND l.event_time BETWEEN @fromDate AND @toDate
-            ),
-
-            bucketed AS (
-                SELECT
-                    segment_id,
-                    CASE 
-                        WHEN @bucket = 'hour'
-                            THEN DATEADD(hour, DATEDIFF(hour, 0, event_time), 0)
-                        WHEN @bucket = 'day'
-                            THEN CAST(event_time AS date)
-                        WHEN @bucket = 'month'
-                            THEN DATEFROMPARTS(YEAR(event_time), MONTH(event_time), 1)
-                    END AS bucket_time,
-                    MAX(in_count)  AS max_in,
-                    MAX(out_count) AS max_out
-                FROM log_with_segment
-                GROUP BY
-                    segment_id,
-                    CASE 
-                        WHEN @bucket = 'hour'
-                            THEN DATEADD(hour, DATEDIFF(hour, 0, event_time), 0)
-                        WHEN @bucket = 'day'
-                            THEN CAST(event_time AS date)
-                        WHEN @bucket = 'month'
-                            THEN DATEFROMPARTS(YEAR(event_time), MONTH(event_time), 1)
-                    END
-            )
-
-            SELECT
-                CAST(segment_id AS INT) AS segment_id,   -- ✅ FORCE INT HERE
-                bucket_time,
-                CAST(
-                    max_in - LAG(max_in) OVER (
-                        PARTITION BY segment_id
-                        ORDER BY bucket_time
-                    ) AS BIGINT
-                ) AS total_in,
-                CAST(
-                    max_out - LAG(max_out) OVER (
-                        PARTITION BY segment_id
-                        ORDER BY bucket_time
-                    ) AS BIGINT
-                ) AS total_out
-            FROM bucketed
-            ORDER BY segment_id, bucket_time;
-            ";
+        l.capacity
+    FROM latest_log l
+    LEFT JOIN latest_reset r ON 1 = 1;
+    ";
 
             using var conn = new SqlConnection(_connectionString);
             using var cmd = new SqlCommand(sql, conn);
-
             cmd.Parameters.AddWithValue("@deviceId", deviceId);
-            cmd.Parameters.AddWithValue("@fromDate", from);
-            cmd.Parameters.AddWithValue("@toDate", to);
-            cmd.Parameters.AddWithValue("@bucket", bucket);
 
             await conn.OpenAsync();
             using var reader = await cmd.ExecuteReaderAsync();
 
-            while (await reader.ReadAsync())
-            {
-                result.Add(new SensorChartPointDto
-                {
-                    SegmentId = reader.GetInt32(0),
-                    Time = reader.GetDateTime(1),
-                    TotalIn = reader.IsDBNull(2) ? 0 : reader.GetInt64(2),
-                    TotalOut = reader.IsDBNull(3) ? 0 : reader.GetInt64(3)
-                });
-            }
+            if (!await reader.ReadAsync())
+                return null;
 
-            return result;
+            return new PeopleCounter
+            {
+                DeviceId = reader.GetString(0),
+                Location = reader.GetString(1),
+                SubLocation = reader.IsDBNull(2) ? null : reader.GetString(2),
+                EventTime = reader.GetDateTime(3),
+                InCount = reader.GetInt32(4),
+                OutCount = reader.GetInt32(5),
+                Capacity = reader.GetInt32(7)
+            };
         }
+
+
+
+
+
+
 
 
 
@@ -652,49 +943,6 @@ namespace PeopleCounter_Backend.Data
             }
 
             return result;
-        }
-
-
-        public async Task<List<string>> GetAllDevicesAsync()
-        {
-            const string sql = @"
-                SELECT DISTINCT device_id
-                FROM people_counter_log
-                ORDER BY device_id";
-
-            var list = new List<string>();
-
-            using var conn = new SqlConnection(_connectionString);
-            using var cmd = new SqlCommand(sql, conn);
-
-            await conn.OpenAsync();
-            using var r = await cmd.ExecuteReaderAsync();
-
-            while (await r.ReadAsync())
-                list.Add(r.GetString(0));
-
-            return list;
-        }
-
-        public async Task<List<string>> GetAllLocationAsync()
-        {
-            const string sql = @"
-                SELECT DISTINCT location
-                 FROM people_counter_log
-                ORDER BY location";
-
-            var list = new List<string>();
-
-            using var conn = new SqlConnection(_connectionString);
-            using var cmd = new SqlCommand(sql, conn);
-
-            await conn.OpenAsync();
-            using var r = await cmd.ExecuteReaderAsync();
-
-            while (await r.ReadAsync())
-                list.Add(r.GetString(0));
-
-            return list;
         }
     }
 }

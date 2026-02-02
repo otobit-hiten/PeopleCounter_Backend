@@ -4,7 +4,6 @@ using MQTTnet;
 using MQTTnet.Protocol;
 using PeopleCounter_Backend.Data;
 using PeopleCounter_Backend.Models;
-using System.Buffers;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -18,16 +17,23 @@ namespace PeopleCounter_Backend.Services
         private readonly ILogger<MqttService> _logger;
         private readonly MqttOptions _mqttOptions;
         private readonly IHubContext<PeopleCounterHub> _hubContext;
+        private readonly MqttMessageProcessor _messageProcessor; 
 
         public bool IsConnected => _client.IsConnected;
 
-        public MqttService(IServiceScopeFactory scopeFactory, ILogger<MqttService> logger,
-            IOptions<MqttOptions> mqttOptions, IHubContext<PeopleCounterHub> hub)
+        public MqttService(
+            IServiceScopeFactory scopeFactory,
+            ILogger<MqttService> logger,
+            IOptions<MqttOptions> mqttOptions,
+            IHubContext<PeopleCounterHub> hub,
+            MqttMessageProcessor messageProcessor) 
         {
             _scopeFactory = scopeFactory;
             _logger = logger;
             _mqttOptions = mqttOptions.Value;
             _hubContext = hub;
+            _messageProcessor = messageProcessor; 
+
             var factory = new MqttClientFactory();
             _client = factory.CreateMqttClient();
 
@@ -37,93 +43,24 @@ namespace PeopleCounter_Backend.Services
 
         private async Task HandleDisconnect(MqttClientDisconnectedEventArgs args)
         {
-            _logger.LogWarning("MQTT disconnected. Reconnecting in 5 seconds...");
+            _logger.LogWarning("⚠️ MQTT disconnected. Reconnecting in 5 seconds...");
             await Task.Delay(TimeSpan.FromSeconds(5));
             await Connect(CancellationToken.None);
         }
 
-        private async Task HandleMessage(MqttApplicationMessageReceivedEventArgs e)
+       
+        private Task HandleMessage(MqttApplicationMessageReceivedEventArgs e)
         {
-            try
-            {
-                var payloadSequence = e.ApplicationMessage.Payload;
-                if (payloadSequence.IsEmpty)
-                    return;
+           
+            _messageProcessor.EnqueueMessage(e);
 
-                byte[] payloadBytes = payloadSequence.ToArray();
-                var payload = Encoding.UTF8.GetString(payloadBytes);
-                _logger.LogInformation("MQTT Raw Payload: {Payload}", payload);
-
-                var messages = JsonSerializer.Deserialize<List<MqttPayload>>(payload);
-                if (messages is null || messages.Count == 0)
-                    return;
-                var records = new List<PeopleCounter>();
-                foreach (var device in messages)
-                {
-                    foreach (var d in device.Data)
-                    {
-                        if (!DateTime.TryParse(d.TimeStamp, out var ts)) continue;
-
-                        records.Add(new PeopleCounter
-                        {
-                            DeviceId = device.Device,
-                            Location = d.Location,
-                            SubLocation = d.SubLocation,
-                            InCount = d.Total_IN,
-                            OutCount = d.Total_Out,
-                            Capacity = d.Capacity,
-                            EventTime = ts
-                        });
-                    }
-                }
-                if (records.Count == 0) return;
-
-                using var scope = _scopeFactory.CreateScope();
-                var repo = scope.ServiceProvider.GetRequiredService<PeopleCounterRepository>();
-
-                await repo.InsertAsync(records);
-
-                var devices = await repo.GetLatestLogicalDevicesAsync();
-
-                foreach (var d in devices)
-                {
-                    await _hubContext.Clients
-                        .Group($"building:{d.Location}")
-                        .SendAsync("SensorUpdated", new
-                        {
-                            deviceId = d.DeviceId,
-                            location = d.Location,
-                            sublocation = d.SubLocation,
-                            inCount = d.InCount,
-                            outCount = d.OutCount,
-                            capacity = d.Capacity,
-                            eventTime = d.EventTime
-                        });
-                }
-
-
-                var summaries = await repo.GetBuildingSummaryAsync();
-
-                await _hubContext.Clients
-                    .Group("dashboard")
-                    .SendAsync("BuildingSummaryUpdated", summaries);
-
-
-                //await _hubContext.Clients.All.SendAsync("PeopleCountUpdated", records); 
-
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "MQTT message processing failed");
-                Debug.WriteLine($"MQTT PROCESS ERROR: {ex}");
-            }
+            return Task.CompletedTask;
         }
 
         public async Task Connect(CancellationToken ct)
         {
             if (_client.IsConnected) return;
 
-            // When deploy on client machine remove or comment  .WithTlsOptions(tls => tls.UseTls()) only use if broker is emqx cloud.
             var options = new MqttClientOptionsBuilder()
                 .WithClientId($"{_mqttOptions.ClientIdPrefix}{Guid.NewGuid()}")
                 .WithTcpServer(_mqttOptions.Host, _mqttOptions.Port)
@@ -131,19 +68,22 @@ namespace PeopleCounter_Backend.Services
                 .WithTlsOptions(tls => tls.UseTls())
                 .Build();
 
-            _logger.LogInformation("Connecting to MQTT {Host}:{Port} ...", _mqttOptions.Host, _mqttOptions.Port);
+            _logger.LogInformation("Connecting to MQTT {Host}:{Port}...", _mqttOptions.Host, _mqttOptions.Port);
             await _client.ConnectAsync(options, ct);
+
             _logger.LogInformation("Subscribing to topic: {Topic}", _mqttOptions.Topic);
             await _client.SubscribeAsync(_mqttOptions.Topic, MqttQualityOfServiceLevel.AtMostOnce);
 
             Debug.WriteLine("MQTT CONNECTED");
-            _logger.LogInformation("MQTT connected and subscribed");
+            _logger.LogInformation("✅ MQTT connected and subscribed");
         }
 
         public async Task StopAsync()
         {
             if (_client.IsConnected)
                 await _client.DisconnectAsync();
+
+            _messageProcessor.Stop(); 
         }
 
         public async Task Subscribe(string topic)
@@ -159,7 +99,6 @@ namespace PeopleCounter_Backend.Services
                 MqttQualityOfServiceLevel.AtMostOnce
             );
         }
-
 
         public async Task Publish(string topic, string payload)
         {

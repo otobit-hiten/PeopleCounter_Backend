@@ -52,10 +52,12 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddSignalR();
 
-builder.Services.AddScoped<PeopleCounterRepository>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
-builder.Services.AddSingleton<MqttService>();
+builder.Services.AddSingleton<MqttMessageProcessor>();      // 1. Processor
+builder.Services.AddSingleton<MqttService>();               // 2. MQTT Service
 builder.Services.AddHostedService<MqttBackgroundService>();
+builder.Services.AddScoped<PeopleCounterRepository>();
+
 builder.Services.Configure<MqttOptions>(builder.Configuration.GetSection("Mqtt"));
 builder.Host.UseWindowsService();
 var app = builder.Build();
