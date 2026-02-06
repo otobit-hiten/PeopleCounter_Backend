@@ -43,7 +43,7 @@ namespace PeopleCounter_Backend.Services
 
         private async Task HandleDisconnect(MqttClientDisconnectedEventArgs args)
         {
-            _logger.LogWarning("⚠️ MQTT disconnected. Reconnecting in 5 seconds...");
+            _logger.LogWarning("MQTT disconnected. Reconnecting in 5 seconds...");
             await Task.Delay(TimeSpan.FromSeconds(5));
             await Connect(CancellationToken.None);
         }
@@ -75,7 +75,7 @@ namespace PeopleCounter_Backend.Services
             await _client.SubscribeAsync(_mqttOptions.Topic, MqttQualityOfServiceLevel.AtMostOnce);
 
             Debug.WriteLine("MQTT CONNECTED");
-            _logger.LogInformation("✅ MQTT connected and subscribed");
+            _logger.LogInformation("MQTT connected and subscribed");
         }
 
         public async Task StopAsync()

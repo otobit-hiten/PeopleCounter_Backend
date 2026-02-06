@@ -5,7 +5,7 @@ using PeopleCounter_Backend.Models;
 using PeopleCounter_Backend.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://localhost:5000");
+builder.WebHost.UseUrls("http://10.10.66.50:5000");
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -53,8 +53,8 @@ builder.Services.AddCors(options =>
 builder.Services.AddSignalR();
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
-builder.Services.AddSingleton<MqttMessageProcessor>();      // 1. Processor
-builder.Services.AddSingleton<MqttService>();               // 2. MQTT Service
+builder.Services.AddSingleton<MqttMessageProcessor>();      
+builder.Services.AddSingleton<MqttService>();               
 builder.Services.AddHostedService<MqttBackgroundService>();
 builder.Services.AddScoped<PeopleCounterRepository>();
 

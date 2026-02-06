@@ -38,7 +38,7 @@ namespace PeopleCounter_Backend.Services
                     SingleWriter = false 
                 });
 
-            _logger.LogInformation("🚀 MqttMessageProcessor starting background processor");
+            _logger.LogInformation("MqttMessageProcessor starting background processor");
             Task.Run(() => ProcessMessagesAsync(_cts.Token));
         }
 
@@ -51,7 +51,7 @@ namespace PeopleCounter_Backend.Services
                 if (depth > QUEUE_WARNING_THRESHOLD)
                 {
                     _logger.LogWarning(
-                        "⚠️ High queue depth: ~{Count} messages. Processing may be falling behind.",
+                        "High queue depth: ~{Count} messages. Processing may be falling behind.",
                         depth);
                 }
             }
@@ -66,7 +66,7 @@ namespace PeopleCounter_Backend.Services
 
         private async Task ProcessMessagesAsync(CancellationToken cancellationToken)
         {
-            _logger.LogInformation("✅ Message processor background task started");
+            _logger.LogInformation("Message processor background task started");
 
             var buffer = new List<MqttApplicationMessageReceivedEventArgs>();
 
@@ -100,7 +100,7 @@ namespace PeopleCounter_Backend.Services
                         if (buffer.Count > 0)
                         {
                             Interlocked.Add(ref _queueDepth, -buffer.Count);
-                            _logger.LogInformation("🔄 Processing batch of {Count} MQTT messages", buffer.Count);
+                            _logger.LogInformation("Processing batch of {Count} MQTT messages", buffer.Count);
                             await ProcessMessageBatch(buffer);
                         }
                     }
@@ -112,12 +112,12 @@ namespace PeopleCounter_Backend.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "❌ Error in message processor main loop");
+                    _logger.LogError(ex, "Error in message processor main loop");
                     await Task.Delay(1000, cancellationToken); 
                 }
             }
 
-            _logger.LogInformation("✅ Message processor background task stopped");
+            _logger.LogInformation("Message processor background task stopped");
         }
 
         private async Task ProcessMessageBatch(List<MqttApplicationMessageReceivedEventArgs> messages)
@@ -181,12 +181,12 @@ namespace PeopleCounter_Backend.Services
 
                 if (allRecords.Count == 0)
                 {
-                    _logger.LogWarning("⚠️ No valid records from {Count} MQTT messages", messages.Count);
+                    _logger.LogWarning("No valid records from {Count} MQTT messages", messages.Count);
                     return;
                 }
 
                 _logger.LogInformation(
-                    "✅ Parsed {RecordCount} sensor records from {MessageCount} MQTT messages",
+                    "Parsed {RecordCount} sensor records from {MessageCount} MQTT messages",
                     allRecords.Count,
                     messages.Count);
 
@@ -200,7 +200,7 @@ namespace PeopleCounter_Backend.Services
                 insertStopwatch.Stop();
 
                 _logger.LogInformation(
-                    "✅ Bulk insert: {Ms}ms for {Count} records",
+                    "Bulk insert: {Ms}ms for {Count} records",
                     insertStopwatch.ElapsedMilliseconds,
                     allRecords.Count);
 
@@ -212,13 +212,13 @@ namespace PeopleCounter_Backend.Services
                 queryStopwatch.Stop();
 
                 _logger.LogInformation(
-                    "✅ Batch query: {Ms}ms for {Count} devices",
+                    "Batch query: {Ms}ms for {Count} devices",
                     queryStopwatch.ElapsedMilliseconds,
                     deviceIds.Count);
 
                 if (devices == null || devices.Count == 0)
                 {
-                    _logger.LogWarning("⚠️ No devices returned from batch query");
+                    _logger.LogWarning("No devices returned from batch query");
                     return;
                 }
 
@@ -226,14 +226,14 @@ namespace PeopleCounter_Backend.Services
                 await SendSignalRUpdates(devices, repo);
                 signalRStopwatch.Stop();
 
-                _logger.LogInformation("✅ SignalR updates: {Ms}ms", signalRStopwatch.ElapsedMilliseconds);
+                _logger.LogInformation("SignalR updates: {Ms}ms", signalRStopwatch.ElapsedMilliseconds);
 
                
 
                 totalStopwatch.Stop();
 
                 _logger.LogInformation(
-                    "🎯 Batch summary: {MessageCount} msgs → {RecordCount} records → " +
+                    "Batch summary: {MessageCount} msgs → {RecordCount} records → " +
                     "{DeviceCount} devices | Insert: {InsertMs}ms, Query: {QueryMs}ms, " +
                     "SignalR: {SignalRMs}ms, Total: {TotalMs}ms",
                     messages.Count,
@@ -246,7 +246,7 @@ namespace PeopleCounter_Backend.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Batch processing failed");
+                _logger.LogError(ex, "Batch processing failed");
             }
         }
 
@@ -261,7 +261,7 @@ namespace PeopleCounter_Backend.Services
                     .SendAsync("SensorUpdated", device));
             }
 
-            _logger.LogDebug("📤 Sending {Count} sensor updates", devices.Count);
+            _logger.LogDebug("Sending {Count} sensor updates", devices.Count);
 
             tasks.Add(Task.Run(async () =>
             {
@@ -273,7 +273,7 @@ namespace PeopleCounter_Backend.Services
                         .Group("dashboard")
                         .SendAsync("BuildingSummaryUpdated", summaries);
 
-                    _logger.LogDebug("📤 Sent building summary for {Count} buildings", summaries.Count);
+                    _logger.LogDebug("Sent building summary for {Count} buildings", summaries.Count);
                 }
                 catch (Exception ex)
                 {
