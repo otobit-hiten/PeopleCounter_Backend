@@ -5,7 +5,7 @@ using PeopleCounter_Backend.Models;
 using PeopleCounter_Backend.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://localhost:5000");
+builder.WebHost.UseUrls("http://localhost:5000/");
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -58,6 +58,8 @@ builder.Services.AddSingleton<MqttService>();
 builder.Services.AddHostedService<MqttBackgroundService>();
 builder.Services.Configure<MqttOptions>(builder.Configuration.GetSection("Mqtt"));
 builder.Host.UseWindowsService();
+builder.Services.AddSingleton<DataRetentionService>();
+builder.Services.AddHostedService<DataRetentionBackgroundService>();
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -66,7 +68,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+//app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseDeveloperExceptionPage();

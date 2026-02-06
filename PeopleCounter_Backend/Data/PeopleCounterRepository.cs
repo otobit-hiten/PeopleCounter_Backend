@@ -696,5 +696,46 @@ namespace PeopleCounter_Backend.Data
 
             return list;
         }
+        public async Task<List<PeopleCounter>> GetArchiveByMonthAsync(int year,int month)
+        {
+            var from = new DateTime(year, month, 1);
+            var to = from.AddMonths(1);
+
+            var sql = @"
+            SELECT *
+            FROM people_counter_log_archive
+            WHERE event_time >= @from
+            AND event_time < @to
+            ORDER BY event_time";
+
+            var list = new List<PeopleCounter>();
+
+            using var conn = new SqlConnection(_connectionString);
+            using var cmd = new SqlCommand(sql, conn);
+
+            cmd.Parameters.AddWithValue("@from", from);
+            cmd.Parameters.AddWithValue("@to", to);
+
+            await conn.OpenAsync();
+            using var r = await cmd.ExecuteReaderAsync();
+
+            while (await r.ReadAsync())
+            {
+                list.Add(new PeopleCounter
+                {
+                    DeviceId = r.GetString(r.GetOrdinal("device_id")),
+                    Location = r.GetString(r.GetOrdinal("location")),
+                    SubLocation = r.IsDBNull(r.GetOrdinal("sublocation"))
+                                    ? null
+                                    : r.GetString(r.GetOrdinal("sublocation")),
+                    InCount = r.GetInt32(r.GetOrdinal("in_count")),
+                    OutCount = r.GetInt32(r.GetOrdinal("out_count")),
+                    Capacity = r.GetInt32(r.GetOrdinal("capacity")),
+                    EventTime = r.GetDateTime(r.GetOrdinal("event_time"))
+                });
+            }
+
+            return list;
+        }
     }
 }
