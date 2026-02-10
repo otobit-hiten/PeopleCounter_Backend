@@ -60,6 +60,10 @@ builder.Services.Configure<MqttOptions>(builder.Configuration.GetSection("Mqtt")
 builder.Host.UseWindowsService();
 builder.Services.AddSingleton<DataRetentionService>();
 builder.Services.AddHostedService<DataRetentionBackgroundService>();
+builder.Services.AddScoped<SensorRepository>();
+builder.Services.AddScoped<SensorHealthService>();
+builder.Services.AddHostedService<SensorHealthBackgroundService>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())

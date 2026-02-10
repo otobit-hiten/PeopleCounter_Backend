@@ -11,29 +11,39 @@ namespace PeopleCounter_Backend.Services
                 _connectionString = config.GetConnectionString("DefaultConnection");
             }
 
-            public async Task MoveOldDataToArchiveAsync()
+        public async Task MoveOldDataToArchiveAsync()
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            using var transaction = conn.BeginTransaction();
+
+            try
             {
-                using var conn = new SqlConnection(_connectionString);
-                await conn.OpenAsync();
+                var monthStart = new DateTime( DateTime.UtcNow.Year,DateTime.UtcNow.Month,1);
 
                 var sql = @"
-                    DECLARE @monthStart DATETIME2 =
-                    DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1);
-
-                  -- Move previous months data
-                  INSERT INTO people_counter_log_archive
-                  SELECT *
+                   INSERT INTO people_counter_log_archive (
+                  id, device_id, count, event_time
+                   )
+                  SELECT id, device_id, count, event_time
                   FROM people_counter_log
                   WHERE event_time < @monthStart;
-
-                  -- Delete moved data
                   DELETE FROM people_counter_log
                   WHERE event_time < @monthStart;
-                  "; 
+                   ";
 
-              using var cmd = new SqlCommand(sql, conn);
-                   await cmd.ExecuteNonQueryAsync();
+                using var cmd = new SqlCommand(sql, conn, transaction);
+                cmd.Parameters.AddWithValue("@monthStart", monthStart);
+
+                await cmd.ExecuteNonQueryAsync();
+                await transaction.CommitAsync();
             }
-        
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        }
     }
 }
