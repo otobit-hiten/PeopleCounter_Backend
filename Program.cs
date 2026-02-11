@@ -63,6 +63,7 @@ builder.Services.AddHostedService<DataRetentionBackgroundService>();
 builder.Services.AddScoped<SensorRepository>();
 builder.Services.AddScoped<SensorHealthService>();
 builder.Services.AddHostedService<SensorHealthBackgroundService>();
+builder.Services.AddMemoryCache();
 
 var app = builder.Build();
 

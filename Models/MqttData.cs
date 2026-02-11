@@ -7,6 +7,7 @@
         public int Total_IN { get; set; }
         public int Total_Out { get; set; }
         public int Capacity { get; set; }
+        public string ipaddr { get; set; }
         public string TimeStamp { get; set; }
     }
 

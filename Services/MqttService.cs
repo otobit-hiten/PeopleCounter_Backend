@@ -8,6 +8,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace PeopleCounter_Backend.Services
 {
@@ -18,6 +19,7 @@ namespace PeopleCounter_Backend.Services
         private readonly ILogger<MqttService> _logger;
         private readonly MqttOptions _mqttOptions;
         private readonly IHubContext<PeopleCounterHub> _hubContext;
+        private readonly IMemoryCache _cache;
 
         public bool IsConnected => _client.IsConnected;
 
@@ -42,6 +44,21 @@ namespace PeopleCounter_Backend.Services
             await Connect(CancellationToken.None);
         }
 
+        public MqttService(IServiceScopeFactory scopeFactory,ILogger<MqttService> logger,IOptions<MqttOptions> mqttOptions,IHubContext<PeopleCounterHub> hub,IMemoryCache cache)
+        {
+            _scopeFactory = scopeFactory;
+            _logger = logger;
+            _mqttOptions = mqttOptions.Value;
+            _hubContext = hub;
+            _cache = cache;
+
+            var factory = new MqttClientFactory();
+            _client = factory.CreateMqttClient();
+
+            _client.ApplicationMessageReceivedAsync += HandleMessage;
+            _client.DisconnectedAsync += HandleDisconnect;
+        }
+
         private async Task HandleMessage(MqttApplicationMessageReceivedEventArgs e)
         {
             try
@@ -57,7 +74,60 @@ namespace PeopleCounter_Backend.Services
                 var messages = JsonSerializer.Deserialize<List<MqttPayload>>(payload);
                 if (messages is null || messages.Count == 0)
                     return;
+
+                using var scope = _scopeFactory.CreateScope();
+
+                var peopleRepo = scope.ServiceProvider
+                    .GetRequiredService<PeopleCounterRepository>();
+
+                var sensorRepo = scope.ServiceProvider
+                    .GetRequiredService<SensorRepository>();
+
+                foreach (var device in messages)
+                {
+                    var location = device.Data.FirstOrDefault()?.Location ?? "";
+                    var cacheKey = $"sensor:{device.Device}";
+
+                    if (!_cache.TryGetValue(cacheKey, out Sensor sensor))
+                    {
+                        sensor = await sensorRepo.GetByDeviceAsync(device.Device)
+                                 ?? new Sensor
+                                 {
+                                     Device = device.Device,
+                                     Location = location
+                                 };
+                    }
+
+                    sensor.IsOnline = true;
+                    sensor.LastSeen = DateTime.UtcNow;
+                    sensor.Location = location;
+
+                    _cache.Set(
+                        cacheKey,
+                        sensor,
+                        new MemoryCacheEntryOptions
+                        {
+                            SlidingExpiration = TimeSpan.FromMinutes(5)
+                        });
+
+                    if (sensor.Id == 0)
+                    {
+                        await sensorRepo.InsertIfNotExistsAsync(
+                            sensor.Device,
+                            sensor.Location,
+                            sensor.IpAddress
+                        );
+
+                        var dbSensor = await sensorRepo.GetByDeviceAsync(sensor.Device);
+                        if (dbSensor != null)
+                            sensor.Id = dbSensor.Id;
+                    }
+
+                    await sensorRepo.UpdateStatusAsync(sensor.Id, true);
+                }
+
                 var records = new List<PeopleCounter>();
+
                 foreach (var device in messages)
                 {
                     foreach (var d in device.Data)
@@ -76,14 +146,12 @@ namespace PeopleCounter_Backend.Services
                         });
                     }
                 }
+
                 if (records.Count == 0) return;
 
-                using var scope = _scopeFactory.CreateScope();
-                var repo = scope.ServiceProvider.GetRequiredService<PeopleCounterRepository>();
+                await peopleRepo.InsertAsync(records);
 
-                await repo.InsertAsync(records);
-
-                var devices = await repo.GetLatestLogicalDevicesAsync();
+                var devices = await peopleRepo.GetLatestLogicalDevicesAsync();
 
                 foreach (var d in devices)
                 {
@@ -101,16 +169,11 @@ namespace PeopleCounter_Backend.Services
                         });
                 }
 
-
-                var summaries = await repo.GetBuildingSummaryAsync();
+                var summaries = await peopleRepo.GetBuildingSummaryAsync();
 
                 await _hubContext.Clients
                     .Group("dashboard")
                     .SendAsync("BuildingSummaryUpdated", summaries);
-
-
-                //await _hubContext.Clients.All.SendAsync("PeopleCountUpdated", records); 
-
             }
             catch (Exception ex)
             {
@@ -118,6 +181,7 @@ namespace PeopleCounter_Backend.Services
                 Debug.WriteLine($"MQTT PROCESS ERROR: {ex}");
             }
         }
+
 
         public async Task Connect(CancellationToken ct)
         {
