@@ -5,7 +5,7 @@ using PeopleCounter_Backend.Models;
 using PeopleCounter_Backend.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://10.10.66.50:5000");
+builder.WebHost.UseUrls("http://192.168.88.11:5000");
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -52,13 +52,23 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddSignalR();
 
-builder.Services.AddScoped<IUserRepository, UserRepository>();
-builder.Services.AddSingleton<MqttMessageProcessor>();      
-builder.Services.AddSingleton<MqttService>();               
-builder.Services.AddHostedService<MqttBackgroundService>();
-builder.Services.AddScoped<PeopleCounterRepository>();
-
 builder.Services.Configure<MqttOptions>(builder.Configuration.GetSection("Mqtt"));
+builder.Services.AddSingleton<SensorCacheService>();
+builder.Services.AddSingleton<MqttMessageProcessor>();
+builder.Services.AddSingleton<MqttService>();
+builder.Services.AddHostedService<MqttBackgroundService>();
+
+builder.Services.AddScoped<PeopleCounterRepository>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<SensorRepository>();
+builder.Services.AddScoped<SensorHealthService>();
+
+builder.Services.AddSingleton<DataRetentionService>();
+builder.Services.AddHostedService<DataRetentionBackgroundService>();
+builder.Services.AddHostedService<SensorHealthBackgroundService>();
+
+builder.Services.AddMemoryCache();
+
 builder.Host.UseWindowsService();
 var app = builder.Build();
 

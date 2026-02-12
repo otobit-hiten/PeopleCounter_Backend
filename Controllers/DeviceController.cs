@@ -149,5 +149,26 @@ namespace PeopleCounter_Backend.Controllers
         [HttpGet("location")]
         public async Task<IActionResult> GetLocation()
             => Ok(await _repository.GetAllLocationAsync());
+
+
+        [HttpGet("status")]
+        public async Task<IActionResult> GetSensorStatuses()
+        {
+            var sensorCache = HttpContext.RequestServices.GetRequiredService<SensorCacheService>();
+            await sensorCache.InitializeAsync();
+
+            var sensors = sensorCache.GetAll()
+                .Select(s => new
+                {
+                    s.Device,
+                    s.Location,
+                    s.IsOnline,
+                    s.LastSeen,
+                    s.IpAddress
+                })
+                .ToList();
+
+            return Ok(sensors);
+        }
     }
 }

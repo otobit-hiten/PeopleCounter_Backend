@@ -15,6 +15,7 @@ namespace PeopleCounter_Backend.Services
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly IHubContext<PeopleCounterHub> _hubContext;
         private readonly ILogger<MqttMessageProcessor> _logger;
+        private readonly SensorCacheService _sensorCache;
         private readonly CancellationTokenSource _cts = new();
 
         private const int BATCH_INTERVAL_MS = 200;      
@@ -25,11 +26,13 @@ namespace PeopleCounter_Backend.Services
         public MqttMessageProcessor(
             IServiceScopeFactory scopeFactory,
             IHubContext<PeopleCounterHub> hubContext,
-            ILogger<MqttMessageProcessor> logger)
+            ILogger<MqttMessageProcessor> logger,
+            SensorCacheService sensorCache)
         {
             _scopeFactory = scopeFactory;
             _hubContext = hubContext;
             _logger = logger;
+            _sensorCache = sensorCache;
 
             _messageQueue = Channel.CreateUnbounded<MqttApplicationMessageReceivedEventArgs>(
                 new UnboundedChannelOptions
@@ -164,9 +167,20 @@ namespace PeopleCounter_Backend.Services
                                     InCount = d.Total_IN,
                                     OutCount = d.Total_Out,
                                     Capacity = d.Capacity,
+                                    IpAddress = d.ipaddr,
                                     EventTime = ts
                                 });
                             }
+                        }
+
+                        var distinctDevices = allRecords
+    .Select(r => new { r.DeviceId, r.Location, r.IpAddress })
+    .DistinctBy(x => x.DeviceId)
+    .ToList();
+
+                        foreach (var d in distinctDevices)
+                        {
+                            await _sensorCache.EnsureSensorExistsAsync(d.DeviceId, d.Location, d.IpAddress);
                         }
                     }
                     catch (JsonException ex)
