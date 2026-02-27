@@ -1,35 +1,50 @@
-﻿using System.Diagnostics;
+﻿using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace PeopleCounter_Backend.Services
 {
     public class MqttBackgroundService : BackgroundService
     {
         private readonly MqttService _mqttService;
+        private readonly ILogger<MqttBackgroundService> _logger;
 
-        public MqttBackgroundService(MqttService mqttService)
+        public MqttBackgroundService(MqttService mqttService, ILogger<MqttBackgroundService> logger)
         {
             _mqttService = mqttService;
+            _logger = logger;
         }
 
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            try
+            await Task.Yield();
+
+            while (!stoppingToken.IsCancellationRequested)
             {
-                await _mqttService.Connect(stoppingToken);
-                while (!stoppingToken.IsCancellationRequested)
+                try
                 {
-                    await Task.Delay(1000, stoppingToken);
+                    if (!_mqttService.IsConnected)
+                    {
+                        await _mqttService.Connect(stoppingToken);
+                    }
+                    await Task.Delay(5000, stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "MQTT error. Retrying in 30 seconds...");
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+                    }
+                    catch (OperationCanceledException) { break; }
                 }
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"MQTT startup failed: {ex}");
-            }
-
-            await Task.Delay(Timeout.Infinite, stoppingToken);
-
         }
+
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
             await _mqttService.StopAsync();

@@ -42,7 +42,12 @@ namespace PeopleCounter_Backend.Services
                 });
 
             _logger.LogInformation("MqttMessageProcessor starting background processor");
-            Task.Run(() => ProcessMessagesAsync(_cts.Token));
+            _ = Task.Run(() => ProcessMessagesAsync(_cts.Token))
+    .ContinueWith(t =>
+    {
+        if (t.IsFaulted)
+            _logger.LogCritical(t.Exception, "Message processor crashed unexpectedly.");
+    }, TaskContinuationOptions.OnlyOnFaulted);
         }
 
         public void EnqueueMessage(MqttApplicationMessageReceivedEventArgs e)
@@ -180,7 +185,9 @@ namespace PeopleCounter_Backend.Services
 
                         foreach (var d in distinctDevices)
                         {
-                            await _sensorCache.EnsureSensorExistsAsync(d.DeviceId, d.Location, d.IpAddress);
+                            var result = await _sensorCache.EnsureSensorExistsAsync(d.DeviceId, d.Location, d.IpAddress);
+                            if (result == null)
+                                _logger.LogWarning("Could not ensure sensor {DeviceId} exists.", d.DeviceId);
                         }
                     }
                     catch (JsonException ex)

@@ -5,7 +5,7 @@ using PeopleCounter_Backend.Models;
 using PeopleCounter_Backend.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://192.168.88.11:5000");
+builder.WebHost.UseUrls("http://10.10.66.50:5000");
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -87,4 +87,13 @@ app.UseCors("AllowSignalR");
 app.UseWebSockets();
 app.MapHub<PeopleCounterHub>("/peopleCounterHub");
 
-app.Run();
+try
+{
+    app.Run();
+}
+catch (Exception ex)
+{
+    var logger = app.Services.GetRequiredService<ILogger<Program>>();
+    logger.LogCritical(ex, "Host terminated unexpectedly");
+    throw;
+}

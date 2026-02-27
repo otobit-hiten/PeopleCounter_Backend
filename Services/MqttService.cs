@@ -43,9 +43,28 @@ namespace PeopleCounter_Backend.Services
 
         private async Task HandleDisconnect(MqttClientDisconnectedEventArgs args)
         {
-            _logger.LogWarning("MQTT disconnected. Reconnecting in 5 seconds...");
-            await Task.Delay(TimeSpan.FromSeconds(5));
-            await Connect(CancellationToken.None);
+            _logger.LogWarning("MQTT disconnected: {Reason}", args.ReasonString);
+
+            int retryCount = 0;
+            const int maxRetries = 10;
+
+            while (retryCount < maxRetries)
+            {
+                try
+                {
+                    retryCount++;
+                    _logger.LogInformation("Reconnect attempt {Attempt}/{Max}...", retryCount, maxRetries);
+                    await Task.Delay(TimeSpan.FromSeconds(5));
+                    await Connect(CancellationToken.None);
+                    _logger.LogInformation("Reconnected successfully.");
+                    return; 
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Reconnect attempt {Attempt} failed.", retryCount);
+                }
+            }
+            _logger.LogCritical("MQTT failed to reconnect after {Max} attempts. Giving up.", maxRetries);
         }
 
        
@@ -65,7 +84,7 @@ namespace PeopleCounter_Backend.Services
                 .WithClientId($"{_mqttOptions.ClientIdPrefix}{Guid.NewGuid()}")
                 .WithTcpServer(_mqttOptions.Host, _mqttOptions.Port)
                 .WithCredentials(_mqttOptions.Username, _mqttOptions.Password)
-                .WithTlsOptions(tls => tls.UseTls())
+                //.WithTlsOptions(tls => tls.UseTls())
                 .Build();
 
             _logger.LogInformation("Connecting to MQTT {Host}:{Port}...", _mqttOptions.Host, _mqttOptions.Port);

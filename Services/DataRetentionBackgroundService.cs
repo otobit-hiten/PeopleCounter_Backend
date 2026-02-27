@@ -3,29 +3,42 @@
     public class DataRetentionBackgroundService : BackgroundService
     {
         private readonly IServiceScopeFactory _scopeFactory;
+        private readonly ILogger<DataRetentionBackgroundService> _logger;
 
-        public DataRetentionBackgroundService(IServiceScopeFactory scopeFactory)
+        public DataRetentionBackgroundService(IServiceScopeFactory scopeFactory, ILogger<DataRetentionBackgroundService> logger)
         {
             _scopeFactory = scopeFactory;
-        }
+            _logger = logger;
+        }   
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            await Task.Yield();
             while (!stoppingToken.IsCancellationRequested)
             {
-                using var scope = _scopeFactory.CreateScope();
-                var retentionService =
-                    scope.ServiceProvider.GetRequiredService<DataRetentionService>();
 
                 try
                 {
+                    using var scope = _scopeFactory.CreateScope();
+                    var retentionService = scope.ServiceProvider.GetRequiredService<DataRetentionService>();
+
+                    _logger.LogInformation("Starting data retention job.");
                     await retentionService.MoveOldDataToArchiveAsync();
+                    _logger.LogInformation("Data retention job completed.");
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _logger.LogError(ex, "Data retention job failed.");
                 }
 
-                await Task.Delay(TimeSpan.FromHours(24), stoppingToken);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromHours(24), stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break; 
+                }
             }
         }
     }

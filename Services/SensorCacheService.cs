@@ -53,7 +53,8 @@ namespace PeopleCounter_Backend.Services
 
         public IReadOnlyCollection<Sensor> GetAll() => _cache.Values.ToList();
 
-        public async Task<Sensor> EnsureSensorExistsAsync(string deviceId, string location, string ipAddress)
+
+        public async Task<Sensor?> EnsureSensorExistsAsync(string deviceId, string location, string ipAddress)
         {
             if (!_initialized) await InitializeAsync();
 
@@ -62,10 +63,9 @@ namespace PeopleCounter_Backend.Services
 
             using var scope = _scopeFactory.CreateScope();
             var repo = scope.ServiceProvider.GetRequiredService<SensorRepository>();
-
             await repo.InsertIfNotExistsAsync(deviceId, location, ipAddress);
-
             var sensor = await repo.GetByDeviceAsync(deviceId);
+
             if (sensor != null)
             {
                 _cache[deviceId] = sensor;
@@ -73,10 +73,14 @@ namespace PeopleCounter_Backend.Services
                     "New sensor discovered and cached: {DeviceId} at {Location} ({Ip})",
                     deviceId, location, ipAddress);
             }
+            else
+            {
+                _logger.LogWarning(
+                    "Sensor {DeviceId} not found after insert — possible DB issue.", deviceId);
+            }
 
-            return sensor!;
+            return sensor; // nullable — let caller handle null
         }
-
 
         public void UpdateStatus(string deviceId, bool online, DateTime? lastSeen)
         {

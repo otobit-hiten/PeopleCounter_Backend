@@ -23,15 +23,17 @@ namespace PeopleCounter_Backend.Services
                 var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
 
                 var sql = @"
-                   INSERT INTO people_counter_log_archive (
-                  id, device_id, count, event_time
-                   )
-                  SELECT id, device_id, count, event_time
-                  FROM people_counter_log
-                  WHERE event_time < @monthStart;
-                  DELETE FROM people_counter_log
-                  WHERE event_time < @monthStart;
-                   ";
+    INSERT INTO people_counter_log_archive (
+        id, device_id, location, sublocation, in_count, out_count, capacity, event_time, created_at
+    )
+    SELECT 
+        id, device_id, location, sublocation, in_count, out_count, capacity, event_time, created_at
+    FROM people_counter_log
+    WHERE event_time < @monthStart;
+
+    DELETE FROM people_counter_log
+    WHERE event_time < @monthStart;
+";
 
                 using var cmd = new SqlCommand(sql, conn, transaction);
                 cmd.Parameters.AddWithValue("@monthStart", monthStart);
