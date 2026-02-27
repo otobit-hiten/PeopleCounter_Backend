@@ -79,7 +79,7 @@ namespace PeopleCounter_Backend.Services
                     "Sensor {DeviceId} not found after insert — possible DB issue.", deviceId);
             }
 
-            return sensor; // nullable — let caller handle null
+            return sensor;
         }
 
         public void UpdateStatus(string deviceId, bool online, DateTime? lastSeen)
