@@ -27,29 +27,69 @@ namespace PeopleCounter_Backend.Services
             _logger.LogInformation("Starting health check for {Count} sensors", sensors.Count);
 
             int onlineCount = 0;
+            int idleCount = 0;
             int offlineCount = 0;
 
             foreach (var sensor in sensors)
             {
-                bool online = await PingAsync(sensor.Device, sensor.IpAddress);
-                await _repo.UpdateStatusAsync(sensor.Id, online);
-                _sensorCache.UpdateStatus(sensor.Device, online,
-                    online ? DateTime.Now : null);
+                SensorStatus status;
 
-                if (online) onlineCount++;
+                
+                bool hasRecentData = await _repo.IsActiveRecentlyAsync(sensor.Device, minutes: 2);
+
+                if (hasRecentData)
+                {
+                    
+                    status = SensorStatus.Online;
+                    _logger.LogInformation(
+                        "Sensor {Device} → ONLINE (recent data)", sensor.Device);
+                }
+                else
+                {
+                    
+                    bool pingSuccess = await PingAsync(sensor.Device, sensor.IpAddress);
+
+                    if (pingSuccess)
+                    {
+                       
+                        status = SensorStatus.Idle;
+                        _logger.LogInformation(
+                            "Sensor {Device} → IDLE (no recent data but ping OK)",
+                            sensor.Device);
+                    }
+                    else
+                    {
+                        
+                        status = SensorStatus.Offline;
+                        _logger.LogWarning(
+                            "Sensor {Device} → OFFLINE (no data + ping failed)",
+                            sensor.Device);
+                    }
+                }
+
+                
+                var lastSeen = await _repo.GetLastDataTimeAsync(sensor.Device);
+
+                // Update DB and cache
+                await _repo.UpdateStatusAsync(sensor.Id, status, lastSeen);
+                _sensorCache.UpdateStatus(sensor.Device, status, lastSeen);
+
+                if (status == SensorStatus.Online) onlineCount++;
+                else if (status == SensorStatus.Idle) idleCount++;
                 else offlineCount++;
             }
 
             _logger.LogInformation(
-                "Health check complete: {Online} online, {Offline} offline out of {Total} sensors",
-                onlineCount, offlineCount, sensors.Count);
+                "Health check complete: {Online} online, {Idle} idle, {Offline} offline out of {Total} sensors",
+                onlineCount, idleCount, offlineCount, sensors.Count);
         }
 
         private async Task<bool> PingAsync(string device, string ip)
         {
             if (string.IsNullOrWhiteSpace(ip))
             {
-                _logger.LogWarning("Sensor {Device} has no IP address — skipping ping", device);
+                _logger.LogWarning(
+                    "Sensor {Device} has no IP address — skipping ping", device);
                 return false;
             }
 
@@ -61,14 +101,14 @@ namespace PeopleCounter_Backend.Services
                 if (reply.Status == IPStatus.Success)
                 {
                     _logger.LogInformation(
-                        "Sensor {Device} ({Ip}) is ONLINE — {RoundTrip}ms",
+                        "Sensor {Device} ({Ip}) ping OK — {RoundTrip}ms",
                         device, ip, reply.RoundtripTime);
                     return true;
                 }
                 else
                 {
                     _logger.LogWarning(
-                        "Sensor {Device} ({Ip}) is OFFLINE — status: {Status}",
+                        "Sensor {Device} ({Ip}) ping failed — status: {Status}",
                         device, ip, reply.Status);
                     return false;
                 }
@@ -76,7 +116,7 @@ namespace PeopleCounter_Backend.Services
             catch (PingException ex)
             {
                 _logger.LogWarning(
-                    "Sensor {Device} ({Ip}) ping failed: {Message}",
+                    "Sensor {Device} ({Ip}) ping exception: {Message}",
                     device, ip, ex.InnerException?.Message ?? ex.Message);
                 return false;
             }

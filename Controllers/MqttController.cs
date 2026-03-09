@@ -24,24 +24,19 @@ namespace PeopleCounter_Backend.Controllers
             return Ok("Published");
         }
 
-        [HttpGet("getAllDevice")]
-        public async Task<IActionResult> GetAllDevice()
-        {
-            var data = await _repository.GetLatestPerDeviceAsync();
-            return Ok(data);
-        }
+
 
         [HttpGet("buildings")]
         public async Task<IActionResult> GetBuildings()
         {
-            var data = await _repository.GetBuildingSummaryAsync();
+            var data = await _repository.GetBuildingSummary();
             return Ok(data);
         }
 
         [HttpGet("building/{building}")]
         public async Task<IActionResult> GetBuildingDevices(string building)
         {
-            var data = await _repository.GetSensorsByBuildingAsync(building);
+            var data = await _repository.GetSensorsByBuilding(building);
             return Ok(data);
         }
 

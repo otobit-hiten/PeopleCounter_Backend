@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using PeopleCounter_Backend.Data;
 using PeopleCounter_Backend.Models;
 using PeopleCounter_Backend.Services;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://10.10.66.50:5000");
@@ -50,7 +51,12 @@ builder.Services.AddCors(options =>
 });
 
 
-builder.Services.AddSignalR();
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
+    });
 
 builder.Services.Configure<MqttOptions>(builder.Configuration.GetSection("Mqtt"));
 builder.Services.AddSingleton<SensorCacheService>();
@@ -63,8 +69,8 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<SensorRepository>();
 builder.Services.AddScoped<SensorHealthService>();
 
-builder.Services.AddSingleton<DataRetentionService>();
-builder.Services.AddHostedService<DataRetentionBackgroundService>();
+//builder.Services.AddSingleton<DataRetentionService>();
+//builder.Services.AddHostedService<DataRetentionBackgroundService>();
 builder.Services.AddHostedService<SensorHealthBackgroundService>();
 
 builder.Services.AddMemoryCache();
@@ -78,7 +84,6 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseDeveloperExceptionPage();

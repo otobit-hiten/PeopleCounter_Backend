@@ -31,7 +31,7 @@ namespace PeopleCounter_Backend.Controllers
             await _hub.Clients.Group($"building:{building}")
                 .SendAsync("DeviceReset", deviceId);
 
-            var updatedSummaries = await _repository.GetBuildingSummaryAsync();
+            var updatedSummaries = await _repository.GetBuildingSummary();
             await _hub.Clients.Group("dashboard")
                 .SendAsync("BuildingSummaryUpdated", updatedSummaries);
 
@@ -46,12 +46,12 @@ namespace PeopleCounter_Backend.Controllers
         [HttpPost("building/{building}/reset")]
         public async Task<IActionResult> ResetBuilding(string building)
         {
-            await _repository.ResetAllDevicesByBuildingAsync(building);
+            await _repository.ResetAllDevicesInBuilding(building);
 
             await _hub.Clients.Group($"building:{building}")
                 .SendAsync("BuildingReset", building);
 
-            var updatedSummaries = await _repository.GetBuildingSummaryAsync();
+            var updatedSummaries = await _repository.GetBuildingSummary();
             await _hub.Clients.Group("dashboard")
                 .SendAsync("BuildingSummaryUpdated", updatedSummaries);
 
@@ -61,18 +61,6 @@ namespace PeopleCounter_Backend.Controllers
                 building
             });
         }
-
-
-        //[HttpGet("chart")]
-        //public async Task<IActionResult> GetSensorChart(
-        //[FromQuery] string deviceId,
-        //[FromQuery] DateTime from,
-        //[FromQuery] DateTime to,
-        //[FromQuery] string bucket = "hour")
-        //{
-        //    var data = await _repository.GetSensorChartAsync(deviceId, from, to, bucket);
-        //    return Ok(data);
-        //}
 
 
         [HttpGet("trend")]
@@ -143,12 +131,12 @@ namespace PeopleCounter_Backend.Controllers
 
         [HttpGet("list")]
         public async Task<IActionResult> GetDevices()
-            => Ok(await _repository.GetAllDevicesAsync());
+            => Ok(await _repository.GetListOfDevices());
 
 
         [HttpGet("location")]
         public async Task<IActionResult> GetLocation()
-            => Ok(await _repository.GetAllLocationAsync());
+            => Ok(await _repository.GetListOfLocation());
 
 
         [HttpGet("status")]
@@ -164,7 +152,8 @@ namespace PeopleCounter_Backend.Controllers
                     s.Location,
                     s.IsOnline,
                     s.LastSeen,
-                    s.IpAddress
+                    s.IpAddress,
+                    Status = s.Status.ToString()  // "Online", "Idle", "Offline"
                 })
                 .ToList();
 

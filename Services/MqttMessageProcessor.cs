@@ -178,16 +178,15 @@ namespace PeopleCounter_Backend.Services
                             }
                         }
 
-                        var distinctDevices = allRecords
-    .Select(r => new { r.DeviceId, r.Location, r.IpAddress })
-    .DistinctBy(x => x.DeviceId)
-    .ToList();
+                        var distinctDevices = allRecords.Select(r => new { r.DeviceId, r.Location, r.IpAddress }).DistinctBy(x => x.DeviceId).ToList();
 
                         foreach (var d in distinctDevices)
                         {
                             var result = await _sensorCache.EnsureSensorExistsAsync(d.DeviceId, d.Location, d.IpAddress);
                             if (result == null)
                                 _logger.LogWarning("Could not ensure sensor {DeviceId} exists.", d.DeviceId);
+                            else
+                                _sensorCache.UpdateStatus(d.DeviceId, SensorStatus.Online, DateTime.Now);
                         }
                     }
                     catch (JsonException ex)
@@ -288,7 +287,7 @@ namespace PeopleCounter_Backend.Services
             {
                 try
                 {
-                    var summaries = await repo.GetBuildingSummaryAsync();
+                    var summaries = await repo.GetBuildingSummary();
 
                     await _hubContext.Clients
                         .Group("dashboard")

@@ -82,11 +82,12 @@ namespace PeopleCounter_Backend.Services
             return sensor;
         }
 
-        public void UpdateStatus(string deviceId, bool online, DateTime? lastSeen)
+        public void UpdateStatus(string deviceId, SensorStatus status, DateTime? lastSeen)
         {
             if (_cache.TryGetValue(deviceId, out var sensor))
             {
-                sensor.IsOnline = online;
+                sensor.Status = status;
+                sensor.IsOnline = status == SensorStatus.Online;
                 if (lastSeen.HasValue)
                     sensor.LastSeen = lastSeen.Value;
             }
