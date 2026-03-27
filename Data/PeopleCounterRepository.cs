@@ -84,7 +84,7 @@ namespace PeopleCounter_Backend.Data
                 INSERT INTO dbo.people_counter_resets
                 (device_id, reset_time, reset_in_count, reset_out_count)
                 VALUES
-                (@deviceId, GETUTCDATE(), @resetIn, @resetOut);";
+                (@deviceId, GETDATE(), @resetIn, @resetOut);";
 
             using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync();
@@ -326,6 +326,7 @@ namespace PeopleCounter_Backend.Data
                    ORDER BY created_at DESC, id DESC
                ) AS rn
         FROM people_counter_log
+        WHERE location = @building
     ),
     calculated AS (
         SELECT
@@ -356,13 +357,14 @@ namespace PeopleCounter_Backend.Data
         event_time,
         display_in,
         display_out,
-       display_in - display_out AS inside
+        display_in - display_out AS inside
     FROM calculated;";
 
             var result = new List<PeopleCounter>();
 
             using var conn = new SqlConnection(_connectionString);
             using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@building", building);
 
             await conn.OpenAsync();
             using var reader = await cmd.ExecuteReaderAsync();
@@ -375,16 +377,13 @@ namespace PeopleCounter_Backend.Data
                     Location = reader.GetString(1),
                     SubLocation = reader.IsDBNull(2) ? null : reader.GetString(2),
                     EventTime = reader.GetDateTime(3),
-                    InCount = reader.GetInt32(4),   // display_in  (post-reset)
-                    OutCount = reader.GetInt32(5),   // display_out (post-reset)
-                    Capacity = reader.GetInt32(6)    // inside = in - out (clamped to 0)
+                    InCount = reader.GetInt32(4),
+                    OutCount = reader.GetInt32(5),
+                    Capacity = reader.GetInt32(6)
                 });
             }
 
-
-            return result
-                .Where(d => d.Location == building)
-                .ToList();
+            return result;
         }
 
 
@@ -681,6 +680,93 @@ ORDER BY bucket_time;";
                 });
             }
 
+            return result;
+        }
+
+
+        public async Task<List<DailyComparisonDto>> GetDailyComparisonAsync(
+            DateOnly date,
+            string? building,
+            string? deviceId)
+        {
+            const string sql = @"
+WITH hourly_max AS (
+    SELECT
+        device_id,
+        location,
+        sublocation,
+        DATEADD(MINUTE, DATEDIFF(MINUTE, 0, event_time), 0) AS hour_bucket,
+        MAX(in_count)  AS raw_in,
+        MAX(out_count) AS raw_out
+    FROM people_counter_log
+    WHERE CAST(event_time AS DATE) = @date
+      AND (@building IS NULL OR location  = @building)
+      AND (@deviceId IS NULL OR device_id = @deviceId)
+    GROUP BY
+        device_id,
+        location,
+        sublocation,
+        DATEADD(MINUTE, DATEDIFF(MINUTE, 0, event_time), 0)
+)
+SELECT
+    h.device_id,
+    h.location,
+    h.sublocation,
+    h.hour_bucket,
+    h.raw_in,
+    h.raw_out,
+    CASE WHEN h.raw_in >= h.raw_out THEN h.raw_in - h.raw_out ELSE 0 END AS raw_inside,
+    CASE
+        WHEN r.reset_in_count IS NULL      THEN h.raw_in
+        WHEN h.raw_in < r.reset_in_count   THEN h.raw_in
+        ELSE h.raw_in - r.reset_in_count
+    END AS display_in,
+    CASE
+        WHEN r.reset_out_count IS NULL     THEN h.raw_out
+        WHEN h.raw_out < r.reset_out_count THEN h.raw_out
+        ELSE h.raw_out - r.reset_out_count
+    END AS display_out
+FROM hourly_max h
+OUTER APPLY (
+    SELECT TOP 1 reset_in_count, reset_out_count
+    FROM people_counter_resets
+    WHERE device_id = h.device_id
+      AND reset_time < DATEADD(MINUTE, 1, h.hour_bucket)
+    ORDER BY reset_time DESC
+) r
+ORDER BY h.device_id, h.hour_bucket;";
+
+            var result = new List<DailyComparisonDto>();
+
+            using var conn = new SqlConnection(_connectionString);
+            using var cmd = new SqlCommand(sql, conn);
+
+            cmd.Parameters.AddWithValue("@date", date.ToDateTime(TimeOnly.MinValue));
+            cmd.Parameters.AddWithValue("@building", (object?)building ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@deviceId", (object?)deviceId ?? DBNull.Value);
+
+            await conn.OpenAsync();
+            using var reader = await cmd.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                var displayIn  = reader.GetInt32(7);
+                var displayOut = reader.GetInt32(8);
+
+                result.Add(new DailyComparisonDto
+                {
+                    DeviceId       = reader.GetString(0),
+                    Location       = reader.GetString(1),
+                    SubLocation    = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    Hour           = reader.GetDateTime(3),
+                    RawIn          = reader.GetInt32(4),
+                    RawOut         = reader.GetInt32(5),
+                    RawInside      = reader.GetInt32(6),
+                    DisplayIn      = displayIn,
+                    DisplayOut     = displayOut,
+                    DisplayInside  = displayIn - displayOut
+                });
+            }
             return result;
         }
     }

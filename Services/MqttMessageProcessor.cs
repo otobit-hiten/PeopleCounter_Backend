@@ -18,10 +18,13 @@ namespace PeopleCounter_Backend.Services
         private readonly SensorCacheService _sensorCache;
         private readonly CancellationTokenSource _cts = new();
 
-        private const int BATCH_INTERVAL_MS = 200;      
-        private const int MAX_BATCH_SIZE = 100;        
+        private const int BATCH_INTERVAL_MS = 200;
+        private const int MAX_BATCH_SIZE = 100;
         private const int QUEUE_WARNING_THRESHOLD = 500;
         private int _queueDepth = 0;
+
+        // Tracks last inserted (InCount, OutCount) per device to skip redundant data
+        private readonly Dictionary<string, (int In, int Out)> _lastKnownCounts = new();
 
         public MqttMessageProcessor(
             IServiceScopeFactory scopeFactory,
@@ -177,17 +180,6 @@ namespace PeopleCounter_Backend.Services
                                 });
                             }
                         }
-
-                        var distinctDevices = allRecords.Select(r => new { r.DeviceId, r.Location, r.IpAddress }).DistinctBy(x => x.DeviceId).ToList();
-
-                        foreach (var d in distinctDevices)
-                        {
-                            var result = await _sensorCache.EnsureSensorExistsAsync(d.DeviceId, d.Location, d.IpAddress);
-                            if (result == null)
-                                _logger.LogWarning("Could not ensure sensor {DeviceId} exists.", d.DeviceId);
-                            else
-                                _sensorCache.UpdateStatus(d.DeviceId, SensorStatus.Online, DateTime.Now);
-                        }
                     }
                     catch (JsonException ex)
                     {
@@ -205,27 +197,69 @@ namespace PeopleCounter_Backend.Services
                     return;
                 }
 
+                // Update sensor cache once for all distinct devices in the batch
+                var distinctDevices = allRecords
+                    .DistinctBy(r => r.DeviceId)
+                    .Select(r => new { r.DeviceId, r.Location, r.IpAddress })
+                    .ToList();
+
+                foreach (var d in distinctDevices)
+                {
+                    var sensor = await _sensorCache.EnsureSensorExistsAsync(d.DeviceId, d.Location, d.IpAddress);
+                    if (sensor == null)
+                        _logger.LogWarning("Could not ensure sensor {DeviceId} exists.", d.DeviceId);
+                    else
+                        _sensorCache.UpdateStatus(d.DeviceId, SensorStatus.Online, DateTime.Now);
+                }
+
+                // Sort by event time so within-batch ordering is chronological
+                allRecords.Sort((a, b) => a.EventTime.CompareTo(b.EventTime));
+
+                // Filter out records where counts haven't changed since last insert for that device
+                var newRecords = new List<PeopleCounter>();
+                foreach (var record in allRecords)
+                {
+                    if (_lastKnownCounts.TryGetValue(record.DeviceId, out var last) &&
+                        last.In == record.InCount && last.Out == record.OutCount)
+                    {
+                        _logger.LogDebug(
+                            "Skipping redundant data for {DeviceId}: IN={In}, OUT={Out}",
+                            record.DeviceId, record.InCount, record.OutCount);
+                        continue;
+                    }
+
+                    newRecords.Add(record);
+                    _lastKnownCounts[record.DeviceId] = (record.InCount, record.OutCount);
+                }
+
+                int skipped = allRecords.Count - newRecords.Count;
+                if (skipped > 0)
+                    _logger.LogInformation("Skipped {Skipped} redundant records (counts unchanged)", skipped);
+
+                if (newRecords.Count == 0)
+                {
+                    _logger.LogInformation("All records in batch were redundant, nothing to insert");
+                    return;
+                }
+
                 _logger.LogInformation(
                     "Parsed {RecordCount} sensor records from {MessageCount} MQTT messages",
-                    allRecords.Count,
+                    newRecords.Count,
                     messages.Count);
 
-              
                 using var scope = _scopeFactory.CreateScope();
                 var repo = scope.ServiceProvider.GetRequiredService<PeopleCounterRepository>();
 
-               
                 var insertStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                await repo.InsertDataAsync(allRecords);
+                await repo.InsertDataAsync(newRecords);
                 insertStopwatch.Stop();
 
                 _logger.LogInformation(
                     "Bulk insert: {Ms}ms for {Count} records",
                     insertStopwatch.ElapsedMilliseconds,
-                    allRecords.Count);
+                    newRecords.Count);
 
-               
-                var deviceIds = allRecords.Select(r => r.DeviceId).Distinct().ToList();
+                var deviceIds = newRecords.Select(r => r.DeviceId).Distinct().ToList();
 
                 var queryStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 var devices = await repo.GetLatestLogicalDeviceByIdsAysnc(deviceIds);
@@ -253,11 +287,12 @@ namespace PeopleCounter_Backend.Services
                 totalStopwatch.Stop();
 
                 _logger.LogInformation(
-                    "Batch summary: {MessageCount} msgs → {RecordCount} records → " +
+                    "Batch summary: {MessageCount} msgs → {RecordCount} records ({Skipped} skipped) → " +
                     "{DeviceCount} devices | Insert: {InsertMs}ms, Query: {QueryMs}ms, " +
                     "SignalR: {SignalRMs}ms, Total: {TotalMs}ms",
                     messages.Count,
-                    allRecords.Count,
+                    newRecords.Count,
+                    skipped,
                     deviceIds.Count,
                     insertStopwatch.ElapsedMilliseconds,
                     queryStopwatch.ElapsedMilliseconds,

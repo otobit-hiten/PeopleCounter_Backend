@@ -6,7 +6,7 @@ using PeopleCounter_Backend.Services;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://10.10.66.50:5000");
+builder.WebHost.UseUrls(builder.Configuration["Urls"] ?? "http://0.0.0.0:5000");
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -75,6 +75,12 @@ builder.Services.AddHostedService<SensorHealthBackgroundService>();
 
 builder.Services.AddMemoryCache();
 
+builder.Services.AddHealthChecks()
+    .AddSqlServer(
+        builder.Configuration.GetConnectionString("DefaultConnection")!,
+        name: "sqlserver",
+        timeout: TimeSpan.FromSeconds(5));
+
 builder.Host.UseWindowsService();
 var app = builder.Build();
 
@@ -84,13 +90,20 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseExceptionHandler(err => err.Run(async ctx =>
+{
+    ctx.Response.StatusCode = 500;
+    ctx.Response.ContentType = "application/json";
+    await ctx.Response.WriteAsJsonAsync(new { error = "An unexpected error occurred" });
+}));
+
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseDeveloperExceptionPage();
 app.MapControllers();
 app.UseCors("AllowSignalR");
 app.UseWebSockets();
 app.MapHub<PeopleCounterHub>("/peopleCounterHub");
+app.MapHealthChecks("/health");
 
 try
 {

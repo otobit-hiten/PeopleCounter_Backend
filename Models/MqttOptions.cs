@@ -8,5 +8,6 @@
         public string Password { get; set; } = default!;
         public string Topic { get; set; } = default!;
         public string ClientIdPrefix { get; set; } = default!;
+        public bool UseTls { get; set; } = false;
     }
 }

@@ -80,12 +80,15 @@ namespace PeopleCounter_Backend.Services
         {
             if (_client.IsConnected) return;
 
-            var options = new MqttClientOptionsBuilder()
+            var builder = new MqttClientOptionsBuilder()
                 .WithClientId($"{_mqttOptions.ClientIdPrefix}{Guid.NewGuid()}")
                 .WithTcpServer(_mqttOptions.Host, _mqttOptions.Port)
-                .WithCredentials(_mqttOptions.Username, _mqttOptions.Password)
-                //.WithTlsOptions(tls => tls.UseTls())
-                .Build();
+                .WithCredentials(_mqttOptions.Username, _mqttOptions.Password);
+
+            if (_mqttOptions.UseTls)
+                builder.WithTlsOptions(tls => tls.UseTls());
+
+            var options = builder.Build();
 
             _logger.LogInformation("Connecting to MQTT {Host}:{Port}...", _mqttOptions.Host, _mqttOptions.Port);
             await _client.ConnectAsync(options, ct);
