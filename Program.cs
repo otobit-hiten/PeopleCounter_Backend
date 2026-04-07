@@ -6,6 +6,7 @@ using PeopleCounter_Backend.Services;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
+
 builder.WebHost.UseUrls(builder.Configuration["Urls"] ?? "http://0.0.0.0:5000");
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
