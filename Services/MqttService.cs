@@ -43,9 +43,26 @@ namespace PeopleCounter_Backend.Services
 
         private async Task HandleDisconnect(MqttClientDisconnectedEventArgs args)
         {
-            _logger.LogWarning("MQTT disconnected. Reconnecting in 5 seconds...");
-            await Task.Delay(TimeSpan.FromSeconds(5));
-            await Connect(CancellationToken.None);
+            _logger.LogWarning("MQTT disconnected: {Reason}", args.ReasonString);
+
+            int retryCount = 0;
+
+            while (true)
+            {
+                try
+                {
+                    retryCount++;
+                    _logger.LogInformation("Reconnect attempt {Attempt}...", retryCount);
+                    await Task.Delay(TimeSpan.FromSeconds(5));
+                    await Connect(CancellationToken.None);
+                    _logger.LogInformation("Reconnected successfully after {Attempt} attempt(s).", retryCount);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Reconnect attempt {Attempt} failed. Retrying in 5 seconds...", retryCount);
+                }
+            }
         }
 
        
@@ -61,12 +78,15 @@ namespace PeopleCounter_Backend.Services
         {
             if (_client.IsConnected) return;
 
-            var options = new MqttClientOptionsBuilder()
+            var builder = new MqttClientOptionsBuilder()
                 .WithClientId($"{_mqttOptions.ClientIdPrefix}{Guid.NewGuid()}")
                 .WithTcpServer(_mqttOptions.Host, _mqttOptions.Port)
-                .WithCredentials(_mqttOptions.Username, _mqttOptions.Password)
-                .WithTlsOptions(tls => tls.UseTls())
-                .Build();
+                .WithCredentials(_mqttOptions.Username, _mqttOptions.Password);
+
+            if (_mqttOptions.UseTls)
+                builder.WithTlsOptions(tls => tls.UseTls());
+
+            var options = builder.Build();
 
             _logger.LogInformation("Connecting to MQTT {Host}:{Port}...", _mqttOptions.Host, _mqttOptions.Port);
             await _client.ConnectAsync(options, ct);

@@ -1,9 +1,7 @@
-﻿using Azure.Core;
-using Microsoft.AspNetCore.Authentication;
+﻿using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCounter_Backend.Data;
 using PeopleCounter_Backend.Models;
@@ -68,6 +66,7 @@ namespace PeopleCounter_Backend.Controllers
         }
 
 
+        [Authorize(Roles = "Admin")]
         [HttpPost("create")]
         public async Task<IActionResult> CreateUser(CreateUserRequest request)
         {
@@ -81,13 +80,14 @@ namespace PeopleCounter_Backend.Controllers
                 return BadRequest("At least one role is required");
             }
 
+            var existing = await _userRepository.GetUser(request.Username);
+            if (existing != null)
+                return Conflict("Username already exists");
+
             var hasher = new PasswordHasher<object>();
             var passwordHash = hasher.HashPassword(null, request.Password);
 
-            await _userRepository.CreateUser(
-                                request.Username,
-                               passwordHash,
-                               request.Roles);
+            await _userRepository.CreateUser(request.Username, passwordHash, request.Roles);
 
             return Ok("User created successfully");
         }
@@ -115,7 +115,7 @@ namespace PeopleCounter_Backend.Controllers
             });
         }
 
-        [Authorize(Roles = "admin")]
+        [Authorize(Roles = "Admin")]
         [HttpGet("admin")]
         public IActionResult AdminEndpoint()
         {

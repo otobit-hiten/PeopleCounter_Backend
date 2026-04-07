@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using PeopleCounter_Backend.Data;
 using PeopleCounter_Backend.Services;
 
@@ -17,6 +18,7 @@ namespace PeopleCounter_Backend.Controllers
             _repository = repository;
         }
 
+        [Authorize(Roles = "admin")]
         [HttpPost("publish")]
         public async Task<IActionResult> Publish([FromBody] PublishDto dto)
         {
@@ -24,24 +26,19 @@ namespace PeopleCounter_Backend.Controllers
             return Ok("Published");
         }
 
-        [HttpGet("getAllDevice")]
-        public async Task<IActionResult> GetAllDevice()
-        {
-            var data = await _repository.GetLatestPerDeviceAsync();
-            return Ok(data);
-        }
+
 
         [HttpGet("buildings")]
         public async Task<IActionResult> GetBuildings()
         {
-            var data = await _repository.GetBuildingSummaryAsync();
+            var data = await _repository.GetBuildingSummary();
             return Ok(data);
         }
 
         [HttpGet("building/{building}")]
         public async Task<IActionResult> GetBuildingDevices(string building)
         {
-            var data = await _repository.GetSensorsByBuildingAsync(building);
+            var data = await _repository.GetSensorsByBuilding(building);
             return Ok(data);
         }
 

@@ -13,66 +13,48 @@ namespace PeopleCounter_Backend.Controllers
     {
         private readonly PeopleCounterRepository _repository;
         private readonly IHubContext<PeopleCounterHub> _hub;
+        private readonly SensorCacheService _sensorCache;
 
-        public DeviceController(PeopleCounterRepository repository, IHubContext<PeopleCounterHub> hub)
+        public DeviceController(PeopleCounterRepository repository, IHubContext<PeopleCounterHub> hub, SensorCacheService sensorCache)
         {
             _repository = repository;
             _hub = hub;
+            _sensorCache = sensorCache;
         }
 
         [Authorize(Roles = "Admin")]
         [HttpPost("{deviceId}/reset")]
         public async Task<IActionResult> ResetDevice(string deviceId)
         {
-            var building = await _repository.GetBuildingByDevice(deviceId);
-
-            await _repository.ResetDevice(deviceId);
-
-            await _hub.Clients.Group($"building:{building}")
-                .SendAsync("DeviceReset", deviceId);
-
-            var updatedSummaries = await _repository.GetBuildingSummaryAsync();
-            await _hub.Clients.Group("dashboard")
-                .SendAsync("BuildingSummaryUpdated", updatedSummaries);
-
-            return Ok(new
+            try
             {
-                message = "Device reset successful",
-                deviceId
-            });
+                var building = await _repository.GetBuildingByDevice(deviceId);
+                await _repository.ResetDevice(deviceId);
+
+                await _hub.Clients.Group($"building:{building}").SendAsync("DeviceReset", deviceId);
+                var updatedSummaries = await _repository.GetBuildingSummary();
+                await _hub.Clients.Group("dashboard").SendAsync("BuildingSummaryUpdated", updatedSummaries);
+
+                return Ok(new { message = "Device reset successful", deviceId });
+            }
+            catch (InvalidOperationException)
+            {
+                return NotFound(new { error = $"Device '{deviceId}' not found" });
+            }
         }
 
         [Authorize(Roles = "Admin")]
         [HttpPost("building/{building}/reset")]
         public async Task<IActionResult> ResetBuilding(string building)
         {
-            await _repository.ResetAllDevicesByBuildingAsync(building);
+            await _repository.ResetAllDevicesInBuilding(building);
 
-            await _hub.Clients.Group($"building:{building}")
-                .SendAsync("BuildingReset", building);
+            await _hub.Clients.Group($"building:{building}").SendAsync("BuildingReset", building);
+            var updatedSummaries = await _repository.GetBuildingSummary();
+            await _hub.Clients.Group("dashboard").SendAsync("BuildingSummaryUpdated", updatedSummaries);
 
-            var updatedSummaries = await _repository.GetBuildingSummaryAsync();
-            await _hub.Clients.Group("dashboard")
-                .SendAsync("BuildingSummaryUpdated", updatedSummaries);
-
-            return Ok(new
-            {
-                message = "Building reset successful",
-                building
-            });
+            return Ok(new { message = "Building reset successful", building });
         }
-
-
-        //[HttpGet("chart")]
-        //public async Task<IActionResult> GetSensorChart(
-        //[FromQuery] string deviceId,
-        //[FromQuery] DateTime from,
-        //[FromQuery] DateTime to,
-        //[FromQuery] string bucket = "hour")
-        //{
-        //    var data = await _repository.GetSensorChartAsync(deviceId, from, to, bucket);
-        //    return Ok(data);
-        //}
 
 
         [HttpGet("trend")]
@@ -84,6 +66,17 @@ namespace PeopleCounter_Backend.Controllers
         {
             if (string.IsNullOrWhiteSpace(deviceId))
                 return BadRequest("deviceId is required");
+
+            if (from == default || to == default)
+                return BadRequest("from and to dates are required");
+
+            if (to < from)
+                return BadRequest("to must be greater than from");
+
+            var validBuckets = new[] { "hour", "day", "month" };
+            if (!validBuckets.Contains(bucket.ToLower()))
+                return BadRequest("bucket must be one of: hour, day, month");
+
             DateTime adjustedFrom = from;
             DateTime adjustedTo = to;
 
@@ -113,10 +106,20 @@ namespace PeopleCounter_Backend.Controllers
             [FromQuery] DateTime from,
             [FromQuery] DateTime to,
             [FromQuery] string bucket = "hour")
-
         {
             if (string.IsNullOrWhiteSpace(location))
                 return BadRequest("location is required");
+
+            if (from == default || to == default)
+                return BadRequest("from and to dates are required");
+
+            if (to < from)
+                return BadRequest("to must be greater than from");
+
+            var validBuckets = new[] { "hour", "day", "month" };
+            if (!validBuckets.Contains(bucket.ToLower()))
+                return BadRequest("bucket must be one of: hour, day, month");
+
             DateTime adjustedFrom = from;
             DateTime adjustedTo = to;
 
@@ -143,11 +146,52 @@ namespace PeopleCounter_Backend.Controllers
 
         [HttpGet("list")]
         public async Task<IActionResult> GetDevices()
-            => Ok(await _repository.GetAllDevicesAsync());
+            => Ok(await _repository.GetListOfDevices());
 
 
         [HttpGet("location")]
         public async Task<IActionResult> GetLocation()
-            => Ok(await _repository.GetAllLocationAsync());
+            => Ok(await _repository.GetListOfLocation());
+
+
+        [HttpGet("daily-comparison")]
+        public async Task<IActionResult> GetDailyComparison(
+            [FromQuery] DateOnly date,
+            [FromQuery] string? building,
+            [FromQuery] string? deviceId)
+        {
+            if (date == default)
+                return BadRequest("date is required");
+
+            if (string.IsNullOrWhiteSpace(building) && string.IsNullOrWhiteSpace(deviceId))
+                return BadRequest("Either building or deviceId is required");
+
+            var data = await _repository.GetDailyComparisonAsync(date, building, deviceId);
+
+            if (data.Count == 0)
+                return NotFound(new { error = "No data found for the given parameters" });
+
+            return Ok(data);
+        }
+
+        [HttpGet("status")]
+        public async Task<IActionResult> GetSensorStatuses()
+        {
+            await _sensorCache.InitializeAsync();
+
+            var sensors = _sensorCache.GetAll()
+                .Select(s => new
+                {
+                    s.Device,
+                    s.Location,
+                    s.IsOnline,
+                    s.LastSeen,
+                    s.IpAddress,
+                    Status = s.Status.ToString()  // "Online", "Idle", "Offline"
+                })
+                .ToList();
+
+            return Ok(sensors);
+        }
     }
 }

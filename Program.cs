@@ -3,9 +3,11 @@ using Microsoft.Extensions.Options;
 using PeopleCounter_Backend.Data;
 using PeopleCounter_Backend.Models;
 using PeopleCounter_Backend.Services;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://192.168.88.13:5000");
+
+builder.WebHost.UseUrls(builder.Configuration["Urls"] ?? "http://0.0.0.0:5000");
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -50,15 +52,36 @@ builder.Services.AddCors(options =>
 });
 
 
-builder.Services.AddSignalR();
-
-builder.Services.AddScoped<IUserRepository, UserRepository>();
-builder.Services.AddSingleton<MqttMessageProcessor>();      
-builder.Services.AddSingleton<MqttService>();               
-builder.Services.AddHostedService<MqttBackgroundService>();
-builder.Services.AddScoped<PeopleCounterRepository>();
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
+    });
 
 builder.Services.Configure<MqttOptions>(builder.Configuration.GetSection("Mqtt"));
+builder.Services.AddSingleton<SensorCacheService>();
+builder.Services.AddSingleton<MqttMessageProcessor>();
+builder.Services.AddSingleton<MqttService>();
+builder.Services.AddHostedService<MqttBackgroundService>();
+
+builder.Services.AddScoped<PeopleCounterRepository>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<SensorRepository>();
+builder.Services.AddScoped<SensorHealthService>();
+
+builder.Services.AddScoped<DataRetentionService>();
+builder.Services.AddHostedService<DataRetentionBackgroundService>();
+builder.Services.AddHostedService<SensorHealthBackgroundService>();
+
+builder.Services.AddMemoryCache();
+
+builder.Services.AddHealthChecks()
+    .AddSqlServer(
+        builder.Configuration.GetConnectionString("DefaultConnection")!,
+        name: "sqlserver",
+        timeout: TimeSpan.FromSeconds(5));
+
 builder.Host.UseWindowsService();
 var app = builder.Build();
 
@@ -68,13 +91,28 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+app.UseExceptionHandler(err => err.Run(async ctx =>
+{
+    ctx.Response.StatusCode = 500;
+    ctx.Response.ContentType = "application/json";
+    await ctx.Response.WriteAsJsonAsync(new { error = "An unexpected error occurred" });
+}));
+
+app.UseCors("AllowSignalR");
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseDeveloperExceptionPage();
 app.MapControllers();
-app.UseCors("AllowSignalR");
 app.UseWebSockets();
 app.MapHub<PeopleCounterHub>("/peopleCounterHub");
+app.MapHealthChecks("/health");
 
-app.Run();
+try
+{
+    app.Run();
+}
+catch (Exception ex)
+{
+    var logger = app.Services.GetRequiredService<ILogger<Program>>();
+    logger.LogCritical(ex, "Host terminated unexpectedly");
+    throw;
+}
