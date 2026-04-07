@@ -20,18 +20,21 @@ namespace PeopleCounter_Backend.Services
             await conn.OpenAsync();
 
             var cmd = new SqlCommand(
-                "SELECT Id, Device, IpAddress, Status FROM Sensors", conn);
+                "SELECT Id, Device, Location, IpAddress, IsOnline, LastSeen, Status FROM Sensors", conn);
 
             using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
                 list.Add(new Sensor
                 {
-                    Id = reader.GetInt32(0),
-                    Device = reader.GetString(1),
-                    IpAddress = reader.GetString(2),
-                    Status = reader.IsDBNull(3) ? SensorStatus.Offline
-                             : Enum.Parse<SensorStatus>(reader.GetString(3))
+                    Id       = reader.GetInt32(0),
+                    Device   = reader.GetString(1),
+                    Location = reader.IsDBNull(2) ? "" : reader.GetString(2),
+                    IpAddress = reader.IsDBNull(3) ? "" : reader.GetString(3),
+                    IsOnline = reader.GetBoolean(4),
+                    LastSeen = reader.IsDBNull(5) ? null : reader.GetDateTime(5),
+                    Status   = reader.IsDBNull(6) ? SensorStatus.Offline
+                               : Enum.Parse<SensorStatus>(reader.GetString(6))
                 });
             }
 

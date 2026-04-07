@@ -26,62 +26,51 @@ namespace PeopleCounter_Backend.Services
 
             _logger.LogInformation("Starting health check for {Count} sensors", sensors.Count);
 
-            int onlineCount = 0;
-            int idleCount = 0;
-            int offlineCount = 0;
+            var results = await Task.WhenAll(sensors.Select(CheckSensorAsync));
 
-            foreach (var sensor in sensors)
-            {
-                SensorStatus status;
-
-                
-                bool hasRecentData = await _repo.IsActiveRecentlyAsync(sensor.Device, minutes: 2);
-
-                if (hasRecentData)
-                {
-                    
-                    status = SensorStatus.Online;
-                    _logger.LogInformation(
-                        "Sensor {Device} → ONLINE (recent data)", sensor.Device);
-                }
-                else
-                {
-                    
-                    bool pingSuccess = await PingAsync(sensor.Device, sensor.IpAddress);
-
-                    if (pingSuccess)
-                    {
-                       
-                        status = SensorStatus.Idle;
-                        _logger.LogInformation(
-                            "Sensor {Device} → IDLE (no recent data but ping OK)",
-                            sensor.Device);
-                    }
-                    else
-                    {
-                        
-                        status = SensorStatus.Offline;
-                        _logger.LogWarning(
-                            "Sensor {Device} → OFFLINE (no data + ping failed)",
-                            sensor.Device);
-                    }
-                }
-
-                
-                var lastSeen = await _repo.GetLastDataTimeAsync(sensor.Device);
-
-                // Update DB and cache
-                await _repo.UpdateStatusAsync(sensor.Id, status, lastSeen);
-                _sensorCache.UpdateStatus(sensor.Device, status, lastSeen);
-
-                if (status == SensorStatus.Online) onlineCount++;
-                else if (status == SensorStatus.Idle) idleCount++;
-                else offlineCount++;
-            }
+            int onlineCount  = results.Count(s => s == SensorStatus.Online);
+            int idleCount    = results.Count(s => s == SensorStatus.Idle);
+            int offlineCount = results.Count(s => s == SensorStatus.Offline);
 
             _logger.LogInformation(
                 "Health check complete: {Online} online, {Idle} idle, {Offline} offline out of {Total} sensors",
                 onlineCount, idleCount, offlineCount, sensors.Count);
+        }
+
+        private async Task<SensorStatus> CheckSensorAsync(Sensor sensor)
+        {
+            SensorStatus status;
+
+            bool hasRecentData = await _repo.IsActiveRecentlyAsync(sensor.Device, minutes: 5);
+
+            if (hasRecentData)
+            {
+                status = SensorStatus.Online;
+                _logger.LogInformation("Sensor {Device} → ONLINE (recent data)", sensor.Device);
+            }
+            else
+            {
+                bool pingSuccess = await PingAsync(sensor.Device, sensor.IpAddress);
+
+                if (pingSuccess)
+                {
+                    status = SensorStatus.Idle;
+                    _logger.LogInformation(
+                        "Sensor {Device} → IDLE (no recent data but ping OK)", sensor.Device);
+                }
+                else
+                {
+                    status = SensorStatus.Offline;
+                    _logger.LogWarning(
+                        "Sensor {Device} → OFFLINE (no data + ping failed)", sensor.Device);
+                }
+            }
+
+            var lastSeen = await _repo.GetLastDataTimeAsync(sensor.Device);
+            await _repo.UpdateStatusAsync(sensor.Id, status, lastSeen);
+            _sensorCache.UpdateStatus(sensor.Device, status, lastSeen);
+
+            return status;
         }
 
         private async Task<bool> PingAsync(string device, string ip)

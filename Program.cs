@@ -69,8 +69,8 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<SensorRepository>();
 builder.Services.AddScoped<SensorHealthService>();
 
-//builder.Services.AddSingleton<DataRetentionService>();
-//builder.Services.AddHostedService<DataRetentionBackgroundService>();
+builder.Services.AddScoped<DataRetentionService>();
+builder.Services.AddHostedService<DataRetentionBackgroundService>();
 builder.Services.AddHostedService<SensorHealthBackgroundService>();
 
 builder.Services.AddMemoryCache();
@@ -97,10 +97,10 @@ app.UseExceptionHandler(err => err.Run(async ctx =>
     await ctx.Response.WriteAsJsonAsync(new { error = "An unexpected error occurred" });
 }));
 
+app.UseCors("AllowSignalR");
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
-app.UseCors("AllowSignalR");
 app.UseWebSockets();
 app.MapHub<PeopleCounterHub>("/peopleCounterHub");
 app.MapHealthChecks("/health");

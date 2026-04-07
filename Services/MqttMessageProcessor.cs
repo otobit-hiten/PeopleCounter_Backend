@@ -21,10 +21,15 @@ namespace PeopleCounter_Backend.Services
         private const int BATCH_INTERVAL_MS = 200;
         private const int MAX_BATCH_SIZE = 100;
         private const int QUEUE_WARNING_THRESHOLD = 500;
+        private const int QUEUE_MAX_CAPACITY = 5000;
         private int _queueDepth = 0;
 
         // Tracks last inserted (InCount, OutCount) per device to skip redundant data
         private readonly Dictionary<string, (int In, int Out)> _lastKnownCounts = new();
+
+        // Debounce building summary — broadcast at most once every 3 seconds
+        private DateTime _lastSummaryBroadcast = DateTime.MinValue;
+        private static readonly TimeSpan SummaryDebounceInterval = TimeSpan.FromSeconds(3);
 
         public MqttMessageProcessor(
             IServiceScopeFactory scopeFactory,
@@ -37,11 +42,12 @@ namespace PeopleCounter_Backend.Services
             _logger = logger;
             _sensorCache = sensorCache;
 
-            _messageQueue = Channel.CreateUnbounded<MqttApplicationMessageReceivedEventArgs>(
-                new UnboundedChannelOptions
+            _messageQueue = Channel.CreateBounded<MqttApplicationMessageReceivedEventArgs>(
+                new BoundedChannelOptions(QUEUE_MAX_CAPACITY)
                 {
-                    SingleReader = true,   
-                    SingleWriter = false 
+                    FullMode = BoundedChannelFullMode.DropOldest,
+                    SingleReader = true,
+                    SingleWriter = false
                 });
 
             _logger.LogInformation("MqttMessageProcessor starting background processor");
@@ -65,6 +71,12 @@ namespace PeopleCounter_Backend.Services
                         "High queue depth: ~{Count} messages. Processing may be falling behind.",
                         depth);
                 }
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "MQTT queue full ({Capacity}). Dropping oldest message to make room.",
+                    QUEUE_MAX_CAPACITY);
             }
         }
 
@@ -111,7 +123,7 @@ namespace PeopleCounter_Backend.Services
                         if (buffer.Count > 0)
                         {
                             Interlocked.Add(ref _queueDepth, -buffer.Count);
-                            _logger.LogInformation("Processing batch of {Count} MQTT messages", buffer.Count);
+                            _logger.LogDebug("Processing batch of {Count} MQTT messages", buffer.Count);
                             await ProcessMessageBatch(buffer);
                         }
                     }
@@ -234,15 +246,15 @@ namespace PeopleCounter_Backend.Services
 
                 int skipped = allRecords.Count - newRecords.Count;
                 if (skipped > 0)
-                    _logger.LogInformation("Skipped {Skipped} redundant records (counts unchanged)", skipped);
+                    _logger.LogDebug("Skipped {Skipped} redundant records (counts unchanged)", skipped);
 
                 if (newRecords.Count == 0)
                 {
-                    _logger.LogInformation("All records in batch were redundant, nothing to insert");
+                    _logger.LogDebug("All records in batch were redundant, nothing to insert");
                     return;
                 }
 
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "Parsed {RecordCount} sensor records from {MessageCount} MQTT messages",
                     newRecords.Count,
                     messages.Count);
@@ -254,7 +266,7 @@ namespace PeopleCounter_Backend.Services
                 await repo.InsertDataAsync(newRecords);
                 insertStopwatch.Stop();
 
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "Bulk insert: {Ms}ms for {Count} records",
                     insertStopwatch.ElapsedMilliseconds,
                     newRecords.Count);
@@ -265,7 +277,7 @@ namespace PeopleCounter_Backend.Services
                 var devices = await repo.GetLatestLogicalDeviceByIdsAysnc(deviceIds);
                 queryStopwatch.Stop();
 
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "Batch query: {Ms}ms for {Count} devices",
                     queryStopwatch.ElapsedMilliseconds,
                     deviceIds.Count);
@@ -280,13 +292,11 @@ namespace PeopleCounter_Backend.Services
                 await SendSignalRUpdates(devices, repo);
                 signalRStopwatch.Stop();
 
-                _logger.LogInformation("SignalR updates: {Ms}ms", signalRStopwatch.ElapsedMilliseconds);
-
-               
+                _logger.LogDebug("SignalR updates: {Ms}ms", signalRStopwatch.ElapsedMilliseconds);
 
                 totalStopwatch.Stop();
 
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "Batch summary: {MessageCount} msgs → {RecordCount} records ({Skipped} skipped) → " +
                     "{DeviceCount} devices | Insert: {InsertMs}ms, Query: {QueryMs}ms, " +
                     "SignalR: {SignalRMs}ms, Total: {TotalMs}ms",
@@ -318,23 +328,27 @@ namespace PeopleCounter_Backend.Services
 
             _logger.LogDebug("Sending {Count} sensor updates", devices.Count);
 
-            tasks.Add(Task.Run(async () =>
+            if (DateTime.UtcNow - _lastSummaryBroadcast > SummaryDebounceInterval)
             {
-                try
+                _lastSummaryBroadcast = DateTime.UtcNow;
+                tasks.Add(Task.Run(async () =>
                 {
-                    var summaries = await repo.GetBuildingSummary();
+                    try
+                    {
+                        var summaries = await repo.GetBuildingSummary();
 
-                    await _hubContext.Clients
-                        .Group("dashboard")
-                        .SendAsync("BuildingSummaryUpdated", summaries);
+                        await _hubContext.Clients
+                            .Group("dashboard")
+                            .SendAsync("BuildingSummaryUpdated", summaries);
 
-                    _logger.LogDebug("Sent building summary for {Count} buildings", summaries.Count);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to send building summary");
-                }
-            }));
+                        _logger.LogDebug("Sent building summary for {Count} buildings", summaries.Count);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to send building summary");
+                    }
+                }));
+            }
 
             await Task.WhenAll(tasks);
         }

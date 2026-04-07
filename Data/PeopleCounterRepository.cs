@@ -23,9 +23,9 @@ namespace PeopleCounter_Backend.Data
         public async Task<List<string>> GetListOfDevices()
         {
             const string sql = @"
-                SELECT DISTINCT device_id
-                FROM people_counter_log
-                ORDER BY device_id";
+                SELECT Device
+                FROM Sensors
+                ORDER BY Device";
 
             var list = new List<string>();
 
@@ -45,9 +45,9 @@ namespace PeopleCounter_Backend.Data
         public async Task<List<string>> GetListOfLocation()
         {
             const string sql = @"
-                SELECT DISTINCT location
-                 FROM people_counter_log
-                ORDER BY location";
+                SELECT DISTINCT Location
+                FROM Sensors
+                ORDER BY Location";
 
             var list = new List<string>();
 
@@ -251,6 +251,7 @@ namespace PeopleCounter_Backend.Data
                    ORDER BY created_at DESC, id DESC
                ) AS rn
         FROM people_counter_log
+        WHERE created_at >= DATEADD(day, -30, GETDATE())
     ),
     calculated AS (
         SELECT
@@ -327,6 +328,7 @@ namespace PeopleCounter_Backend.Data
                ) AS rn
         FROM people_counter_log
         WHERE location = @building
+          AND created_at >= DATEADD(day, -30, GETDATE())
     ),
     calculated AS (
         SELECT
@@ -414,6 +416,7 @@ namespace PeopleCounter_Backend.Data
                ) AS rn
         FROM people_counter_log
         WHERE device_id IN ({0})
+          AND created_at >= DATEADD(day, -30, GETDATE())
     ),
     calculated AS (
         SELECT
@@ -500,7 +503,11 @@ namespace PeopleCounter_Backend.Data
             WHEN l.out_count < r.reset_out_count  THEN l.out_count
             ELSE l.out_count - r.reset_out_count
         END AS adj_out
-    FROM people_counter_log l
+    FROM (
+        SELECT device_id, event_time, in_count, out_count FROM people_counter_log
+        UNION ALL
+        SELECT device_id, event_time, in_count, out_count FROM people_counter_log_archive
+    ) l
     OUTER APPLY (
         SELECT TOP 1 reset_in_count, reset_out_count
         FROM people_counter_resets r
@@ -520,7 +527,7 @@ bucketed AS (
         END AS bucket_time,
         MAX(adj_in)  AS cum_in,
         MAX(adj_out) AS cum_out,
-        MIN(adj_in)  AS first_in,   -- ✅ baseline for first bucket
+        MIN(adj_in)  AS first_in,
         MIN(adj_out) AS first_out
     FROM reset_adjusted
     GROUP BY
@@ -599,7 +606,11 @@ ORDER BY bucket_time;";
             WHEN l.out_count < r.reset_out_count    THEN l.out_count
             ELSE l.out_count - r.reset_out_count
         END AS adj_out
-    FROM people_counter_log l
+    FROM (
+        SELECT device_id, location, event_time, in_count, out_count FROM people_counter_log
+        UNION ALL
+        SELECT device_id, location, event_time, in_count, out_count FROM people_counter_log_archive
+    ) l
     OUTER APPLY (
         SELECT TOP 1 reset_in_count, reset_out_count
         FROM people_counter_resets r
@@ -698,7 +709,11 @@ WITH hourly_max AS (
         DATEADD(MINUTE, DATEDIFF(MINUTE, 0, event_time), 0) AS hour_bucket,
         MAX(in_count)  AS raw_in,
         MAX(out_count) AS raw_out
-    FROM people_counter_log
+    FROM (
+        SELECT device_id, location, sublocation, event_time, in_count, out_count FROM people_counter_log
+        UNION ALL
+        SELECT device_id, location, sublocation, event_time, in_count, out_count FROM people_counter_log_archive
+    ) AS combined
     WHERE CAST(event_time AS DATE) = @date
       AND (@building IS NULL OR location  = @building)
       AND (@deviceId IS NULL OR device_id = @deviceId)

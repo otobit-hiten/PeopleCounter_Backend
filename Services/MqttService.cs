@@ -46,25 +46,23 @@ namespace PeopleCounter_Backend.Services
             _logger.LogWarning("MQTT disconnected: {Reason}", args.ReasonString);
 
             int retryCount = 0;
-            const int maxRetries = 10;
 
-            while (retryCount < maxRetries)
+            while (true)
             {
                 try
                 {
                     retryCount++;
-                    _logger.LogInformation("Reconnect attempt {Attempt}/{Max}...", retryCount, maxRetries);
+                    _logger.LogInformation("Reconnect attempt {Attempt}...", retryCount);
                     await Task.Delay(TimeSpan.FromSeconds(5));
                     await Connect(CancellationToken.None);
-                    _logger.LogInformation("Reconnected successfully.");
-                    return; 
+                    _logger.LogInformation("Reconnected successfully after {Attempt} attempt(s).", retryCount);
+                    return;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Reconnect attempt {Attempt} failed.", retryCount);
+                    _logger.LogError(ex, "Reconnect attempt {Attempt} failed. Retrying in 5 seconds...", retryCount);
                 }
             }
-            _logger.LogCritical("MQTT failed to reconnect after {Max} attempts. Giving up.", maxRetries);
         }
 
        
