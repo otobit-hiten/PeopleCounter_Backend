@@ -51,7 +51,7 @@ namespace PeopleCounter_Backend.Services
             return _cache.TryGetValue(deviceId, out sensor);
         }
 
-        public IReadOnlyCollection<Sensor> GetAll() => _cache.Values.ToList();
+        public IEnumerable<Sensor> GetAll() => _cache.Values;
 
 
         public async Task<Sensor?> EnsureSensorExistsAsync(string deviceId, string location, string ipAddress)

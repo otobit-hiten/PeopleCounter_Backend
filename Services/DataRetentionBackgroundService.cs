@@ -23,7 +23,7 @@
                     var retentionService = scope.ServiceProvider.GetRequiredService<DataRetentionService>();
 
                     _logger.LogInformation("Starting data retention job.");
-                    await retentionService.MoveOldDataToArchiveAsync();
+                    await retentionService.MoveOldDataToArchiveAsync(stoppingToken);
                     _logger.LogInformation("Data retention job completed.");
                 }
                 catch (Exception ex)

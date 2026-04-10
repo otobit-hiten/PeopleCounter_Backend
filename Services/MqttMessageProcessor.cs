@@ -51,12 +51,7 @@ namespace PeopleCounter_Backend.Services
                 });
 
             _logger.LogInformation("MqttMessageProcessor starting background processor");
-            _ = Task.Run(() => ProcessMessagesAsync(_cts.Token))
-    .ContinueWith(t =>
-    {
-        if (t.IsFaulted)
-            _logger.LogCritical(t.Exception, "Message processor crashed unexpectedly.");
-    }, TaskContinuationOptions.OnlyOnFaulted);
+            _ = Task.Run(() => RunWithRestartAsync(_cts.Token));
         }
 
         public void EnqueueMessage(MqttApplicationMessageReceivedEventArgs e)
@@ -85,6 +80,43 @@ namespace PeopleCounter_Backend.Services
             _logger.LogInformation("Stopping MqttMessageProcessor...");
             _cts.Cancel();
             _messageQueue.Writer.Complete();
+        }
+
+        private async Task RunWithRestartAsync(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await ProcessMessagesAsync(cancellationToken);
+
+                    // ProcessMessagesAsync returned cleanly — shutdown requested
+                    break;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Clean shutdown
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogCritical(ex,
+                        "Message processor crashed unexpectedly. Restarting in 5 seconds...");
+
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+
+                    _logger.LogInformation("Restarting message processor...");
+                }
+            }
+
+            _logger.LogInformation("Message processor supervisor stopped.");
         }
 
         private async Task ProcessMessagesAsync(CancellationToken cancellationToken)
@@ -168,6 +200,12 @@ namespace PeopleCounter_Backend.Services
 
                         foreach (var device in mqttMessages)
                         {
+                            if (string.IsNullOrWhiteSpace(device.Device))
+                            {
+                                _logger.LogWarning("Skipping MQTT payload with missing Device field.");
+                                continue;
+                            }
+
                             foreach (var d in device.Data)
                             {
                                 if (!DateTime.TryParse(d.TimeStamp, out var ts))

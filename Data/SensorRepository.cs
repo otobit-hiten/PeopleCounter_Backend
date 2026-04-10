@@ -19,7 +19,7 @@ namespace PeopleCounter_Backend.Services
             using var conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(
+            using var cmd = new SqlCommand(
                 "SELECT Id, Device, Location, IpAddress, IsOnline, LastSeen, Status FROM Sensors", conn);
 
             using var reader = await cmd.ExecuteReaderAsync();
@@ -46,7 +46,7 @@ namespace PeopleCounter_Backend.Services
             using var conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            using var cmd = new SqlCommand(@"
         UPDATE Sensors
         SET Status   = @status,
             IsOnline = @isOnline,
@@ -66,7 +66,7 @@ namespace PeopleCounter_Backend.Services
             using var conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(
+            using var cmd = new SqlCommand(
                 @"SELECT Id, Device, Location, IpAddress, IsOnline, LastSeen, Status
           FROM Sensors
           WHERE Device = @device", conn);
@@ -74,7 +74,7 @@ namespace PeopleCounter_Backend.Services
             cmd.Parameters.AddWithValue("@device", device);
 
             using var r = await cmd.ExecuteReaderAsync();
-            if (!r.Read()) return null;
+            if (!await r.ReadAsync()) return null;
 
             return new Sensor
             {
@@ -93,7 +93,7 @@ namespace PeopleCounter_Backend.Services
             using var conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            using var cmd = new SqlCommand(@"
         IF NOT EXISTS (SELECT 1 FROM Sensors WHERE Device = @device)
         INSERT INTO Sensors (Device, Location, IsOnline, IpAddress, LastSeen, Status)
         VALUES (@device, @location, 1, @ip, GETDATE(), 'Online')", conn);
@@ -111,7 +111,7 @@ namespace PeopleCounter_Backend.Services
             using var conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            using var cmd = new SqlCommand(@"
         SELECT COUNT(1)
         FROM people_counter_log
         WHERE device_id = @device
@@ -129,7 +129,7 @@ namespace PeopleCounter_Backend.Services
             using var conn = new SqlConnection(_config.GetConnectionString("DefaultConnection"));
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            using var cmd = new SqlCommand(@"
         SELECT TOP 1 created_at
         FROM people_counter_log
         WHERE device_id = @device

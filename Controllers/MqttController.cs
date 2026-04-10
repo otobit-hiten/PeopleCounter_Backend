@@ -7,6 +7,7 @@ namespace PeopleCounter_Backend.Controllers
 {
     [ApiController]
     [Route("mqtt")]
+    [Authorize]
     public class MqttController : ControllerBase
     {
         private readonly MqttService _mqttService;
@@ -18,7 +19,7 @@ namespace PeopleCounter_Backend.Controllers
             _repository = repository;
         }
 
-        [Authorize(Roles = "admin")]
+        [Authorize(Roles = "Admin")]
         [HttpPost("publish")]
         public async Task<IActionResult> Publish([FromBody] PublishDto dto)
         {

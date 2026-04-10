@@ -113,36 +113,46 @@ namespace PeopleCounter_Backend.Data
             }
         }
 
-        //Reset Location
+        //Reset Location — single connection, single transaction, one INSERT for all devices
         public async Task ResetAllDevicesInBuilding(string building)
         {
-            const string sqlGetDevices = @"
-                        SELECT DISTINCT device_id
-                        FROM people_counter_log
-                WHERE location = @building;";
+            const string sql = @"
+                INSERT INTO dbo.people_counter_resets
+                    (device_id, reset_time, reset_in_count, reset_out_count)
+                SELECT
+                    device_id,
+                    GETDATE(),
+                    in_count,
+                    out_count
+                FROM (
+                    SELECT
+                        device_id,
+                        in_count,
+                        out_count,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY device_id
+                            ORDER BY event_time DESC, id DESC
+                        ) AS rn
+                    FROM dbo.people_counter_log
+                    WHERE location = @building
+                ) ranked
+                WHERE rn = 1;";
 
             using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync();
+            using var tx = conn.BeginTransaction();
 
-            var deviceIds = new List<string>();
-
-            using (var cmd = new SqlCommand(sqlGetDevices, conn))
+            try
             {
+                using var cmd = new SqlCommand(sql, conn, tx);
                 cmd.Parameters.AddWithValue("@building", building);
-
-                using var reader = await cmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    deviceIds.Add(reader.GetString(0));
-                }
+                await cmd.ExecuteNonQueryAsync();
+                await tx.CommitAsync();
             }
-
-            if (deviceIds.Count == 0)
-                return;
-
-            foreach (var deviceId in deviceIds)
+            catch
             {
-                await ResetDevice(deviceId);
+                await tx.RollbackAsync();
+                throw;
             }
         }
 

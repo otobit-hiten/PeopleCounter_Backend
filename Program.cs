@@ -99,10 +99,10 @@ app.UseExceptionHandler(err => err.Run(async ctx =>
 }));
 
 app.UseCors("AllowSignalR");
+app.UseWebSockets();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
-app.UseWebSockets();
 app.MapHub<PeopleCounterHub>("/peopleCounterHub");
 app.MapHealthChecks("/health");
 

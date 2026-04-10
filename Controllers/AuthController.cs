@@ -20,6 +20,7 @@ namespace PeopleCounter_Backend.Controllers
             _userRepository = userRepository;
         }
 
+        [AllowAnonymous]
         [HttpPost("login")]
         public async Task<IActionResult> Login(Models.LoginRequest request)
         {
@@ -35,7 +36,7 @@ namespace PeopleCounter_Backend.Controllers
 
             if (result == PasswordVerificationResult.Failed)
             {
-                return Unauthorized("Invalid Password");
+                return Unauthorized("Invalid credentials");
             }
 
             var claims = new List<Claim>
@@ -57,6 +58,7 @@ namespace PeopleCounter_Backend.Controllers
             return Ok("Login successful");
         }
 
+        [AllowAnonymous]
         [HttpPost("logout")]
         public async Task<IActionResult> Logout()
         {

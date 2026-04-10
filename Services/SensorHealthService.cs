@@ -9,6 +9,10 @@ namespace PeopleCounter_Backend.Services
         private readonly SensorCacheService _sensorCache;
         private readonly ILogger<SensorHealthService> _logger;
 
+        // Allow at most 5 sensor checks concurrently to avoid bursting
+        // the DB connection pool (each check opens 2 connections).
+        private readonly SemaphoreSlim _throttle = new(5, 5);
+
         public SensorHealthService(
             SensorRepository repo,
             SensorCacheService sensorCache,
@@ -22,11 +26,11 @@ namespace PeopleCounter_Backend.Services
         public async Task CheckAsync()
         {
             await _sensorCache.InitializeAsync();
-            var sensors = _sensorCache.GetAll();
+            var sensors = _sensorCache.GetAll().ToList();
 
             _logger.LogInformation("Starting health check for {Count} sensors", sensors.Count);
 
-            var results = await Task.WhenAll(sensors.Select(CheckSensorAsync));
+            var results = await Task.WhenAll(sensors.Select(ThrottledCheckAsync));
 
             int onlineCount  = results.Count(s => s == SensorStatus.Online);
             int idleCount    = results.Count(s => s == SensorStatus.Idle);
@@ -35,6 +39,19 @@ namespace PeopleCounter_Backend.Services
             _logger.LogInformation(
                 "Health check complete: {Online} online, {Idle} idle, {Offline} offline out of {Total} sensors",
                 onlineCount, idleCount, offlineCount, sensors.Count);
+        }
+
+        private async Task<SensorStatus> ThrottledCheckAsync(Sensor sensor)
+        {
+            await _throttle.WaitAsync();
+            try
+            {
+                return await CheckSensorAsync(sensor);
+            }
+            finally
+            {
+                _throttle.Release();
+            }
         }
 
         private async Task<SensorStatus> CheckSensorAsync(Sensor sensor)

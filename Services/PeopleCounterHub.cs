@@ -1,7 +1,9 @@
-﻿using Microsoft.AspNetCore.SignalR;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.SignalR;
 
 namespace PeopleCounter_Backend.Services
 {
+    [Authorize]
     public class PeopleCounterHub : Hub
     {
         public Task JoinDashboard()

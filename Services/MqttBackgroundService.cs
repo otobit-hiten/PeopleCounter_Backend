@@ -19,15 +19,18 @@ namespace PeopleCounter_Backend.Services
         {
             await Task.Yield();
 
+            // Handles initial connection only.
+            // All reconnection after a disconnect is owned by MqttService.HandleDisconnect
+            // which uses exponential backoff and respects the stoppingToken.
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
-                    if (!_mqttService.IsConnected)
-                    {
-                        await _mqttService.Connect(stoppingToken);
-                    }
-                    await Task.Delay(5000, stoppingToken);
+                    await _mqttService.Connect(stoppingToken);
+
+                    // Connected — wait here until shutdown is requested.
+                    // HandleDisconnect will manage any reconnects if the broker drops.
+                    await Task.Delay(Timeout.Infinite, stoppingToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -35,7 +38,7 @@ namespace PeopleCounter_Backend.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "MQTT error. Retrying in 30 seconds...");
+                    _logger.LogError(ex, "Initial MQTT connection failed. Retrying in 30 seconds...");
                     try
                     {
                         await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);

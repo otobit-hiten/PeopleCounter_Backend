@@ -4,7 +4,6 @@ using MQTTnet;
 using MQTTnet.Protocol;
 using PeopleCounter_Backend.Data;
 using PeopleCounter_Backend.Models;
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 
@@ -17,7 +16,11 @@ namespace PeopleCounter_Backend.Services
         private readonly ILogger<MqttService> _logger;
         private readonly MqttOptions _mqttOptions;
         private readonly IHubContext<PeopleCounterHub> _hubContext;
-        private readonly MqttMessageProcessor _messageProcessor; 
+        private readonly MqttMessageProcessor _messageProcessor;
+
+        // Stored when Connect() is first called so HandleDisconnect can
+        // respect shutdown without needing a separate parameter.
+        private CancellationToken _stoppingToken = CancellationToken.None;
 
         public bool IsConnected => _client.IsConnected;
 
@@ -26,13 +29,13 @@ namespace PeopleCounter_Backend.Services
             ILogger<MqttService> logger,
             IOptions<MqttOptions> mqttOptions,
             IHubContext<PeopleCounterHub> hub,
-            MqttMessageProcessor messageProcessor) 
+            MqttMessageProcessor messageProcessor)
         {
             _scopeFactory = scopeFactory;
             _logger = logger;
             _mqttOptions = mqttOptions.Value;
             _hubContext = hub;
-            _messageProcessor = messageProcessor; 
+            _messageProcessor = messageProcessor;
 
             var factory = new MqttClientFactory();
             _client = factory.CreateMqttClient();
@@ -43,24 +46,42 @@ namespace PeopleCounter_Backend.Services
 
         private async Task HandleDisconnect(MqttClientDisconnectedEventArgs args)
         {
+            // If shutdown is in progress, do not attempt to reconnect.
+            if (_stoppingToken.IsCancellationRequested)
+            {
+                _logger.LogInformation("MQTT disconnected during shutdown — skipping reconnect.");
+                return;
+            }
+
             _logger.LogWarning("MQTT disconnected: {Reason}", args.ReasonString);
 
             int retryCount = 0;
 
-            while (true)
+            while (!_stoppingToken.IsCancellationRequested)
             {
+                retryCount++;
+
+                // Exponential backoff: 2s, 4s, 8s, 16s, 32s, 60s (capped)
+                var delaySecs = Math.Min(Math.Pow(2, retryCount), 60);
+                _logger.LogInformation(
+                    "Reconnect attempt {Attempt} in {Delay}s...", retryCount, delaySecs);
+
                 try
                 {
-                    retryCount++;
-                    _logger.LogInformation("Reconnect attempt {Attempt}...", retryCount);
-                    await Task.Delay(TimeSpan.FromSeconds(5));
-                    await Connect(CancellationToken.None);
-                    _logger.LogInformation("Reconnected successfully after {Attempt} attempt(s).", retryCount);
+                    await Task.Delay(TimeSpan.FromSeconds(delaySecs), _stoppingToken);
+                    await Connect(_stoppingToken);
+                    _logger.LogInformation(
+                        "MQTT reconnected successfully after {Attempt} attempt(s).", retryCount);
+                    return;
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogInformation("MQTT reconnect cancelled — shutting down.");
                     return;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Reconnect attempt {Attempt} failed. Retrying in 5 seconds...", retryCount);
+                    _logger.LogError(ex, "Reconnect attempt {Attempt} failed.", retryCount);
                 }
             }
         }
@@ -78,6 +99,9 @@ namespace PeopleCounter_Backend.Services
         {
             if (_client.IsConnected) return;
 
+            // Store so HandleDisconnect can check shutdown state
+            _stoppingToken = ct;
+
             var builder = new MqttClientOptionsBuilder()
                 .WithClientId($"{_mqttOptions.ClientIdPrefix}{Guid.NewGuid()}")
                 .WithTcpServer(_mqttOptions.Host, _mqttOptions.Port)
@@ -94,7 +118,6 @@ namespace PeopleCounter_Backend.Services
             _logger.LogInformation("Subscribing to topic: {Topic}", _mqttOptions.Topic);
             await _client.SubscribeAsync(_mqttOptions.Topic, MqttQualityOfServiceLevel.AtMostOnce);
 
-            Debug.WriteLine("MQTT CONNECTED");
             _logger.LogInformation("MQTT connected and subscribed");
         }
 
@@ -110,7 +133,7 @@ namespace PeopleCounter_Backend.Services
         {
             if (!_client.IsConnected)
             {
-                Debug.WriteLine("MQTT not connected yet. Skipping subscribe.");
+                _logger.LogWarning("MQTT not connected yet. Skipping subscribe.");
                 return;
             }
 

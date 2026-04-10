@@ -9,6 +9,7 @@ namespace PeopleCounter_Backend.Controllers
 {
     [ApiController]
     [Route("device")]
+    [Authorize]
     public class DeviceController : ControllerBase
     {
         private readonly PeopleCounterRepository _repository;
