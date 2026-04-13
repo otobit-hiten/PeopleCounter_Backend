@@ -47,11 +47,15 @@ namespace PeopleCounter_Backend.Data
                         throw new Exception($"Role '{role}' does not exist");
                 }
 
-                tx.Commit();
+                await tx.CommitAsync();
             }
             catch (Exception ex)
             {
-                tx.Rollback();
+                try { await tx.RollbackAsync(); }
+                catch (Exception rollbackEx)
+                {
+                    throw new AggregateException("Transaction rollback failed", ex, rollbackEx);
+                }
                 throw;
             }
         }

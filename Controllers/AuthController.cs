@@ -24,18 +24,15 @@ namespace PeopleCounter_Backend.Controllers
         public async Task<IActionResult> Login(Models.LoginRequest request)
         {
             var user = await _userRepository.GetUser(request.Username);
-            if (user == null)
-            {
-                return Unauthorized("Invalid credentials");
-            }
-
 
             var hasher = new PasswordHasher<object>();
-            var result = hasher.VerifyHashedPassword(null, user.PasswordHash, request.Password);
+            var verifyResult = user == null
+                ? PasswordVerificationResult.Failed
+                : hasher.VerifyHashedPassword(null, user.PasswordHash, request.Password);
 
-            if (result == PasswordVerificationResult.Failed)
+            if (verifyResult == PasswordVerificationResult.Failed)
             {
-                return Unauthorized("Invalid Password");
+                return Unauthorized("Invalid credentials");
             }
 
             var claims = new List<Claim>
@@ -92,7 +89,7 @@ namespace PeopleCounter_Backend.Controllers
             return Ok("User created successfully");
         }
 
-        [Authorize]
+        [AllowAnonymous]
         [HttpGet("me")]
         public IActionResult Me()
         {

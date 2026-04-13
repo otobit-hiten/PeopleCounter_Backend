@@ -5,18 +5,21 @@ namespace PeopleCounter_Backend.Services
     public class DataRetentionService
     {
         private readonly string _connectionString;
+        private readonly ILogger<DataRetentionService> _logger;
 
-        public DataRetentionService(IConfiguration config)
+        public DataRetentionService(IConfiguration config, ILogger<DataRetentionService> logger)
         {
             _connectionString = config.GetConnectionString("DefaultConnection");
+            _logger = logger;
         }
 
         public async Task MoveOldDataToArchiveAsync()
         {
-            var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
+            var cutoffDate = DateTime.UtcNow.Date.AddDays(-15);
+            _logger.LogInformation("Data retention cutoff: {CutoffDate}. Archiving records older than 15 days.", cutoffDate);
+
             const int batchSize = 10000;
-            int totalArchived = 0;
-            int totalDeleted = 0;
+            int totalMoved = 0;
 
             while (true)
             {
@@ -26,41 +29,70 @@ namespace PeopleCounter_Backend.Services
 
                 try
                 {
-                    // Archive one batch
+                    // Step 1: count how many rows are eligible this batch
+                    var countSql = @"
+                        SELECT COUNT(*) FROM (
+                            SELECT TOP (@batchSize) p.id
+                            FROM people_counter_log p
+                            WHERE p.event_time < @cutoffDate
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM people_counter_log_archive a WHERE a.id = p.id
+                              )
+                        ) x;";
+
+                    using var countCmd = new SqlCommand(countSql, conn, transaction);
+                    countCmd.Parameters.AddWithValue("@batchSize", batchSize);
+                    countCmd.Parameters.AddWithValue("@cutoffDate", cutoffDate);
+                    countCmd.CommandTimeout = 60;
+
+                    int rowsInBatch = (int)await countCmd.ExecuteScalarAsync();
+
+                    if (rowsInBatch == 0)
+                    {
+                        await transaction.CommitAsync();
+                        break;
+                    }
+
+                    // Step 2: archive the batch
                     var archiveSql = @"
                         INSERT INTO people_counter_log_archive (
                             id, device_id, location, sublocation, in_count, out_count, capacity, event_time, created_at
                         )
                         SELECT TOP (@batchSize)
-                            id, device_id, location, sublocation, in_count, out_count, capacity, event_time, created_at
-                        FROM people_counter_log
-                        WHERE event_time < @monthStart
-                          AND id NOT IN (SELECT id FROM people_counter_log_archive);";
+                            p.id, p.device_id, p.location, p.sublocation,
+                            p.in_count, p.out_count, p.capacity, p.event_time, p.created_at
+                        FROM people_counter_log p
+                        WHERE p.event_time < @cutoffDate
+                          AND NOT EXISTS (
+                              SELECT 1 FROM people_counter_log_archive a WHERE a.id = p.id
+                          );";
 
                     using var archiveCmd = new SqlCommand(archiveSql, conn, transaction);
                     archiveCmd.Parameters.AddWithValue("@batchSize", batchSize);
-                    archiveCmd.Parameters.AddWithValue("@monthStart", monthStart);
-                    int archived = await archiveCmd.ExecuteNonQueryAsync();
-                    totalArchived += archived;
+                    archiveCmd.Parameters.AddWithValue("@cutoffDate", cutoffDate);
+                    archiveCmd.CommandTimeout = 120;
+                    await archiveCmd.ExecuteNonQueryAsync();
 
-                    // Delete the same batch
+                    // Step 3: delete exactly the same batch that was just archived
                     var deleteSql = @"
-                        DELETE TOP (@batchSize) FROM people_counter_log
-                        WHERE event_time < @monthStart
-                          AND id IN (SELECT id FROM people_counter_log_archive);";
+                        DELETE TOP (@batchSize) p
+                        FROM people_counter_log p
+                        WHERE p.event_time < @cutoffDate
+                          AND EXISTS (
+                              SELECT 1 FROM people_counter_log_archive a WHERE a.id = p.id
+                          );";
 
                     using var deleteCmd = new SqlCommand(deleteSql, conn, transaction);
                     deleteCmd.Parameters.AddWithValue("@batchSize", batchSize);
-                    deleteCmd.Parameters.AddWithValue("@monthStart", monthStart);
-                    int deleted = await deleteCmd.ExecuteNonQueryAsync();
-                    totalDeleted += deleted;
+                    deleteCmd.Parameters.AddWithValue("@cutoffDate", cutoffDate);
+                    deleteCmd.CommandTimeout = 120;
+                    await deleteCmd.ExecuteNonQueryAsync();
 
                     await transaction.CommitAsync();
 
-                    // No more rows to process
-                    if (deleted == 0) break;
+                    totalMoved += rowsInBatch;
+                    _logger.LogInformation("Batch complete — moved: {Rows}. Total moved: {Total}.", rowsInBatch, totalMoved);
 
-                    // Small pause between batches to avoid sustained lock pressure
                     await Task.Delay(500);
                 }
                 catch
@@ -69,6 +101,8 @@ namespace PeopleCounter_Backend.Services
                     throw;
                 }
             }
+
+            _logger.LogInformation("Data retention finished. Total rows archived: {Total}.", totalMoved);
         }
     }
 }

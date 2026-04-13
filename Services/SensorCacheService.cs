@@ -10,6 +10,9 @@ namespace PeopleCounter_Backend.Services
         private readonly ILogger<SensorCacheService> _logger;
         private volatile bool _initialized = false;
         private readonly SemaphoreSlim _initLock = new(1, 1);
+        // Protects mutation of individual Sensor objects — ConcurrentDictionary only
+        // guards add/remove, not field writes on the contained objects.
+        private readonly object _sensorMutateLock = new();
 
         public SensorCacheService(
             IServiceScopeFactory scopeFactory,
@@ -51,7 +54,8 @@ namespace PeopleCounter_Backend.Services
             return _cache.TryGetValue(deviceId, out sensor);
         }
 
-        public IReadOnlyCollection<Sensor> GetAll() => _cache.Values.ToList();
+        // Returns Values directly — no List allocation on every call
+        public ICollection<Sensor> GetAll() => _cache.Values;
 
 
         public async Task<Sensor?> EnsureSensorExistsAsync(string deviceId, string location, string ipAddress)
@@ -86,10 +90,13 @@ namespace PeopleCounter_Backend.Services
         {
             if (_cache.TryGetValue(deviceId, out var sensor))
             {
-                sensor.Status = status;
-                sensor.IsOnline = status == SensorStatus.Online;
-                if (lastSeen.HasValue)
-                    sensor.LastSeen = lastSeen.Value;
+                lock (_sensorMutateLock)
+                {
+                    sensor.Status = status;
+                    sensor.IsOnline = status == SensorStatus.Online;
+                    if (lastSeen.HasValue)
+                        sensor.LastSeen = lastSeen.Value;
+                }
             }
         }
     }

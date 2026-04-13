@@ -113,37 +113,26 @@ namespace PeopleCounter_Backend.Data
             }
         }
 
-        //Reset Location
+        //Reset Location — single batched INSERT, replaces N+1 per-device loop
         public async Task ResetAllDevicesInBuilding(string building)
         {
-            const string sqlGetDevices = @"
-                        SELECT DISTINCT device_id
-                        FROM people_counter_log
-                WHERE location = @building;";
+            const string sql = @"
+                INSERT INTO dbo.people_counter_resets (device_id, reset_time, reset_in_count, reset_out_count)
+                SELECT latest.device_id, GETDATE(), latest.in_count, latest.out_count
+                FROM (
+                    SELECT device_id, in_count, out_count,
+                           ROW_NUMBER() OVER (PARTITION BY device_id ORDER BY event_time DESC, id DESC) AS rn
+                    FROM dbo.people_counter_log
+                    WHERE location = @building
+                ) latest
+                WHERE latest.rn = 1;";
 
             using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync();
 
-            var deviceIds = new List<string>();
-
-            using (var cmd = new SqlCommand(sqlGetDevices, conn))
-            {
-                cmd.Parameters.AddWithValue("@building", building);
-
-                using var reader = await cmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                {
-                    deviceIds.Add(reader.GetString(0));
-                }
-            }
-
-            if (deviceIds.Count == 0)
-                return;
-
-            foreach (var deviceId in deviceIds)
-            {
-                await ResetDevice(deviceId);
-            }
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@building", building);
+            await cmd.ExecuteNonQueryAsync();
         }
 
 

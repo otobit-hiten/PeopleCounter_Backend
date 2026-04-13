@@ -57,6 +57,7 @@ namespace PeopleCounter_Backend.Controllers
         }
 
 
+        [Authorize]
         [HttpGet("trend")]
         public async Task<IActionResult> GetSensorTrend(
        [FromQuery] string deviceId,
@@ -100,6 +101,7 @@ namespace PeopleCounter_Backend.Controllers
             return Ok(data);
         }
 
+        [Authorize]
         [HttpGet("trendlocation")]
         public async Task<IActionResult> GetLocationTrend(
             [FromQuery] string location,
@@ -144,16 +146,17 @@ namespace PeopleCounter_Backend.Controllers
         }
 
 
+        [Authorize]
         [HttpGet("list")]
         public async Task<IActionResult> GetDevices()
             => Ok(await _repository.GetListOfDevices());
 
-
+        [Authorize]
         [HttpGet("location")]
         public async Task<IActionResult> GetLocation()
             => Ok(await _repository.GetListOfLocation());
 
-
+        [Authorize]
         [HttpGet("daily-comparison")]
         public async Task<IActionResult> GetDailyComparison(
             [FromQuery] DateOnly date,
@@ -174,6 +177,7 @@ namespace PeopleCounter_Backend.Controllers
             return Ok(data);
         }
 
+        [Authorize]
         [HttpGet("status")]
         public async Task<IActionResult> GetSensorStatuses()
         {

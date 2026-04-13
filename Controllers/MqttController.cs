@@ -18,7 +18,7 @@ namespace PeopleCounter_Backend.Controllers
             _repository = repository;
         }
 
-        [Authorize(Roles = "admin")]
+        [Authorize(Roles = "Admin")]
         [HttpPost("publish")]
         public async Task<IActionResult> Publish([FromBody] PublishDto dto)
         {
@@ -28,6 +28,7 @@ namespace PeopleCounter_Backend.Controllers
 
 
 
+        [Authorize]
         [HttpGet("buildings")]
         public async Task<IActionResult> GetBuildings()
         {
@@ -35,6 +36,7 @@ namespace PeopleCounter_Backend.Controllers
             return Ok(data);
         }
 
+        [Authorize]
         [HttpGet("building/{building}")]
         public async Task<IActionResult> GetBuildingDevices(string building)
         {

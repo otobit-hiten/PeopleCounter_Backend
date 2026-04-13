@@ -22,13 +22,15 @@ namespace PeopleCounter_Backend.Services
         private const int MAX_BATCH_SIZE = 100;
         private const int QUEUE_WARNING_THRESHOLD = 500;
         private const int QUEUE_MAX_CAPACITY = 5000;
+        private const int MAX_LAST_KNOWN_COUNTS = 1000; // prevent unbounded growth
         private int _queueDepth = 0;
 
         // Tracks last inserted (InCount, OutCount) per device to skip redundant data
         private readonly Dictionary<string, (int In, int Out)> _lastKnownCounts = new();
 
         // Debounce building summary — broadcast at most once every 3 seconds
-        private DateTime _lastSummaryBroadcast = DateTime.MinValue;
+        // Uses ticks + Interlocked to avoid race condition between concurrent batches
+        private long _lastSummaryBroadcastTicks = DateTime.MinValue.Ticks;
         private static readonly TimeSpan SummaryDebounceInterval = TimeSpan.FromSeconds(3);
 
         public MqttMessageProcessor(
@@ -51,12 +53,7 @@ namespace PeopleCounter_Backend.Services
                 });
 
             _logger.LogInformation("MqttMessageProcessor starting background processor");
-            _ = Task.Run(() => ProcessMessagesAsync(_cts.Token))
-    .ContinueWith(t =>
-    {
-        if (t.IsFaulted)
-            _logger.LogCritical(t.Exception, "Message processor crashed unexpectedly.");
-    }, TaskContinuationOptions.OnlyOnFaulted);
+            _ = Task.Run(() => RunProcessorWithRestartAsync(_cts.Token));
         }
 
         public void EnqueueMessage(MqttApplicationMessageReceivedEventArgs e)
@@ -85,6 +82,29 @@ namespace PeopleCounter_Backend.Services
             _logger.LogInformation("Stopping MqttMessageProcessor...");
             _cts.Cancel();
             _messageQueue.Writer.Complete();
+        }
+
+        // Wraps ProcessMessagesAsync so it auto-restarts if it ever crashes unexpectedly
+        private async Task RunProcessorWithRestartAsync(CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await ProcessMessagesAsync(ct);
+                    // ProcessMessagesAsync returned normally (cancellation) — exit
+                    return;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogCritical(ex, "Message processor crashed. Restarting in 2 seconds...");
+                    try { await Task.Delay(2000, ct); } catch (OperationCanceledException) { return; }
+                }
+            }
         }
 
         private async Task ProcessMessagesAsync(CancellationToken cancellationToken)
@@ -241,6 +261,12 @@ namespace PeopleCounter_Backend.Services
                     }
 
                     newRecords.Add(record);
+                    // Evict entire cache if it grows too large (e.g. device IDs change over time)
+                    if (_lastKnownCounts.Count >= MAX_LAST_KNOWN_COUNTS)
+                    {
+                        _logger.LogWarning("_lastKnownCounts hit limit ({Max}), clearing cache.", MAX_LAST_KNOWN_COUNTS);
+                        _lastKnownCounts.Clear();
+                    }
                     _lastKnownCounts[record.DeviceId] = (record.InCount, record.OutCount);
                 }
 
@@ -328,29 +354,30 @@ namespace PeopleCounter_Backend.Services
 
             _logger.LogDebug("Sending {Count} sensor updates", devices.Count);
 
-            if (DateTime.UtcNow - _lastSummaryBroadcast > SummaryDebounceInterval)
+            // Atomic check-and-set to prevent duplicate summary broadcasts from concurrent batches
+            var nowTicks = DateTime.UtcNow.Ticks;
+            var lastTicks = Interlocked.Read(ref _lastSummaryBroadcastTicks);
+            if (nowTicks - lastTicks > SummaryDebounceInterval.Ticks &&
+                Interlocked.CompareExchange(ref _lastSummaryBroadcastTicks, nowTicks, lastTicks) == lastTicks)
             {
-                _lastSummaryBroadcast = DateTime.UtcNow;
-                tasks.Add(Task.Run(async () =>
-                {
-                    try
-                    {
-                        var summaries = await repo.GetBuildingSummary();
-
-                        await _hubContext.Clients
-                            .Group("dashboard")
-                            .SendAsync("BuildingSummaryUpdated", summaries);
-
-                        _logger.LogDebug("Sent building summary for {Count} buildings", summaries.Count);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to send building summary");
-                    }
-                }));
+                tasks.Add(SendBuildingSummaryAsync(repo));
             }
 
             await Task.WhenAll(tasks);
+        }
+
+        private async Task SendBuildingSummaryAsync(PeopleCounterRepository repo)
+        {
+            try
+            {
+                var summaries = await repo.GetBuildingSummary();
+                await _hubContext.Clients.Group("dashboard").SendAsync("BuildingSummaryUpdated", summaries);
+                _logger.LogDebug("Sent building summary for {Count} buildings.", summaries.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send building summary.");
+            }
         }
     }
 }

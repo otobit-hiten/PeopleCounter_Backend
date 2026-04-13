@@ -17,7 +17,13 @@ namespace PeopleCounter_Backend.Services
         private readonly ILogger<MqttService> _logger;
         private readonly MqttOptions _mqttOptions;
         private readonly IHubContext<PeopleCounterHub> _hubContext;
-        private readonly MqttMessageProcessor _messageProcessor; 
+        private readonly MqttMessageProcessor _messageProcessor;
+
+        private const int MaxReconnectAttempts = 20;
+        private const int BaseReconnectDelaySeconds = 5;
+        private const int MaxReconnectDelaySeconds = 300; // cap at 5 minutes
+
+        private readonly CancellationTokenSource _reconnectCts = new();
 
         public bool IsConnected => _client.IsConnected;
 
@@ -41,28 +47,49 @@ namespace PeopleCounter_Backend.Services
             _client.DisconnectedAsync += HandleDisconnect;
         }
 
-        private async Task HandleDisconnect(MqttClientDisconnectedEventArgs args)
+        private Task HandleDisconnect(MqttClientDisconnectedEventArgs args)
         {
             _logger.LogWarning("MQTT disconnected: {Reason}", args.ReasonString);
+            // Fire reconnect in background — do NOT block the MQTT event handler
+            _ = Task.Run(() => ReconnectWithBackoffAsync(_reconnectCts.Token));
+            return Task.CompletedTask;
+        }
 
-            int retryCount = 0;
-
-            while (true)
+        private async Task ReconnectWithBackoffAsync(CancellationToken ct)
+        {
+            for (int attempt = 1; attempt <= MaxReconnectAttempts; attempt++)
             {
+                if (ct.IsCancellationRequested) return;
+
+                // Exponential backoff: 5s, 10s, 20s, 40s … capped at 5 minutes
+                var delaySeconds = Math.Min(
+                    BaseReconnectDelaySeconds * Math.Pow(2, attempt - 1),
+                    MaxReconnectDelaySeconds);
+
+                _logger.LogInformation(
+                    "MQTT reconnect attempt {Attempt}/{Max} in {Delay}s...",
+                    attempt, MaxReconnectAttempts, delaySeconds);
+
                 try
                 {
-                    retryCount++;
-                    _logger.LogInformation("Reconnect attempt {Attempt}...", retryCount);
-                    await Task.Delay(TimeSpan.FromSeconds(5));
-                    await Connect(CancellationToken.None);
-                    _logger.LogInformation("Reconnected successfully after {Attempt} attempt(s).", retryCount);
+                    await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
+                    await Connect(ct);
+                    _logger.LogInformation("MQTT reconnected on attempt {Attempt}.", attempt);
+                    return;
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogInformation("MQTT reconnect cancelled (shutdown).");
                     return;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Reconnect attempt {Attempt} failed. Retrying in 5 seconds...", retryCount);
+                    _logger.LogError(ex, "MQTT reconnect attempt {Attempt}/{Max} failed.", attempt, MaxReconnectAttempts);
                 }
             }
+
+            _logger.LogCritical(
+                "MQTT reconnect gave up after {Max} attempts. Restart the service.", MaxReconnectAttempts);
         }
 
        
@@ -100,10 +127,13 @@ namespace PeopleCounter_Backend.Services
 
         public async Task StopAsync()
         {
+            // Cancel any in-progress reconnect loop first
+            await _reconnectCts.CancelAsync();
+
             if (_client.IsConnected)
                 await _client.DisconnectAsync();
 
-            _messageProcessor.Stop(); 
+            _messageProcessor.Stop();
         }
 
         public async Task Subscribe(string topic)

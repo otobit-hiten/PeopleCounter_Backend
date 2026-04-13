@@ -9,6 +9,9 @@ namespace PeopleCounter_Backend.Services
         private readonly SensorCacheService _sensorCache;
         private readonly ILogger<SensorHealthService> _logger;
 
+        // Limit concurrent sensor checks to avoid thundering-herd DB/network spikes
+        private readonly SemaphoreSlim _throttle = new(10, 10);
+
         public SensorHealthService(
             SensorRepository repo,
             SensorCacheService sensorCache,
@@ -38,6 +41,19 @@ namespace PeopleCounter_Backend.Services
         }
 
         private async Task<SensorStatus> CheckSensorAsync(Sensor sensor)
+        {
+            await _throttle.WaitAsync();
+            try
+            {
+                return await CheckSensorInternalAsync(sensor);
+            }
+            finally
+            {
+                _throttle.Release();
+            }
+        }
+
+        private async Task<SensorStatus> CheckSensorInternalAsync(Sensor sensor)
         {
             SensorStatus status;
 

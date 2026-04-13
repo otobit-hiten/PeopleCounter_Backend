@@ -99,20 +99,20 @@ app.UseExceptionHandler(err => err.Run(async ctx =>
 }));
 
 app.UseCors("AllowSignalR");
+app.UseWebSockets();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
-app.UseWebSockets();
 app.MapHub<PeopleCounterHub>("/peopleCounterHub");
 app.MapHealthChecks("/health");
 
+var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
 try
 {
     app.Run();
 }
 catch (Exception ex)
 {
-    var logger = app.Services.GetRequiredService<ILogger<Program>>();
-    logger.LogCritical(ex, "Host terminated unexpectedly");
+    startupLogger.LogCritical(ex, "Host terminated unexpectedly");
     throw;
 }
