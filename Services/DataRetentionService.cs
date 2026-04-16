@@ -29,7 +29,6 @@ namespace PeopleCounter_Backend.Services
 
                 try
                 {
-                    // Step 1: count how many rows are eligible this batch
                     var countSql = @"
                         SELECT COUNT(*) FROM (
                             SELECT TOP (@batchSize) p.id
@@ -53,7 +52,6 @@ namespace PeopleCounter_Backend.Services
                         break;
                     }
 
-                    // Step 2: archive the batch
                     var archiveSql = @"
                         INSERT INTO people_counter_log_archive (
                             id, device_id, location, sublocation, in_count, out_count, capacity, event_time, created_at
@@ -73,7 +71,6 @@ namespace PeopleCounter_Backend.Services
                     archiveCmd.CommandTimeout = 120;
                     await archiveCmd.ExecuteNonQueryAsync();
 
-                    // Step 3: delete exactly the same batch that was just archived
                     var deleteSql = @"
                         DELETE TOP (@batchSize) p
                         FROM people_counter_log p
@@ -91,7 +88,7 @@ namespace PeopleCounter_Backend.Services
                     await transaction.CommitAsync();
 
                     totalMoved += rowsInBatch;
-                    _logger.LogInformation("Batch complete — moved: {Rows}. Total moved: {Total}.", rowsInBatch, totalMoved);
+                    _logger.LogDebug("Batch complete — moved: {Rows}. Total moved: {Total}.", rowsInBatch, totalMoved);
 
                     await Task.Delay(500);
                 }

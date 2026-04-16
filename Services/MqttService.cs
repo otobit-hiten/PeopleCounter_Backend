@@ -21,7 +21,7 @@ namespace PeopleCounter_Backend.Services
 
         private const int MaxReconnectAttempts = 20;
         private const int BaseReconnectDelaySeconds = 5;
-        private const int MaxReconnectDelaySeconds = 300; // cap at 5 minutes
+        private const int MaxReconnectDelaySeconds = 300; 
 
         private readonly CancellationTokenSource _reconnectCts = new();
 
@@ -50,7 +50,6 @@ namespace PeopleCounter_Backend.Services
         private Task HandleDisconnect(MqttClientDisconnectedEventArgs args)
         {
             _logger.LogWarning("MQTT disconnected: {Reason}", args.ReasonString);
-            // Fire reconnect in background — do NOT block the MQTT event handler
             _ = Task.Run(() => ReconnectWithBackoffAsync(_reconnectCts.Token));
             return Task.CompletedTask;
         }
@@ -61,14 +60,11 @@ namespace PeopleCounter_Backend.Services
             {
                 if (ct.IsCancellationRequested) return;
 
-                // Exponential backoff: 5s, 10s, 20s, 40s … capped at 5 minutes
                 var delaySeconds = Math.Min(
                     BaseReconnectDelaySeconds * Math.Pow(2, attempt - 1),
                     MaxReconnectDelaySeconds);
 
-                _logger.LogInformation(
-                    "MQTT reconnect attempt {Attempt}/{Max} in {Delay}s...",
-                    attempt, MaxReconnectAttempts, delaySeconds);
+                _logger.LogInformation("MQTT reconnect attempt {Attempt}/{Max} in {Delay}s",attempt, MaxReconnectAttempts, delaySeconds);
 
                 try
                 {
@@ -87,17 +83,12 @@ namespace PeopleCounter_Backend.Services
                     _logger.LogError(ex, "MQTT reconnect attempt {Attempt}/{Max} failed.", attempt, MaxReconnectAttempts);
                 }
             }
-
-            _logger.LogCritical(
-                "MQTT reconnect gave up after {Max} attempts. Restart the service.", MaxReconnectAttempts);
+            _logger.LogCritical("MQTT reconnect gave up after {Max} attempts. Restart the service.", MaxReconnectAttempts);
         }
 
-       
         private Task HandleMessage(MqttApplicationMessageReceivedEventArgs e)
         {
-           
             _messageProcessor.EnqueueMessage(e);
-
             return Task.CompletedTask;
         }
 
@@ -118,18 +109,15 @@ namespace PeopleCounter_Backend.Services
             _logger.LogInformation("Connecting to MQTT {Host}:{Port}...", _mqttOptions.Host, _mqttOptions.Port);
             await _client.ConnectAsync(options, ct);
 
-            _logger.LogInformation("Subscribing to topic: {Topic}", _mqttOptions.Topic);
+            _logger.LogDebug("Subscribing to topic: {Topic}", _mqttOptions.Topic);
             await _client.SubscribeAsync(_mqttOptions.Topic, MqttQualityOfServiceLevel.AtMostOnce);
 
-            Debug.WriteLine("MQTT CONNECTED");
             _logger.LogInformation("MQTT connected and subscribed");
         }
 
         public async Task StopAsync()
         {
-            // Cancel any in-progress reconnect loop first
             await _reconnectCts.CancelAsync();
-
             if (_client.IsConnected)
                 await _client.DisconnectAsync();
 

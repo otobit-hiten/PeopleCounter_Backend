@@ -236,7 +236,7 @@ namespace PeopleCounter_Backend.Data
     latest_log AS (
         SELECT *,
                ROW_NUMBER() OVER (
-                   PARTITION BY device_id
+                   PARTITION BY device_id, location
                    ORDER BY created_at DESC, id DESC
                ) AS rn
         FROM people_counter_log
@@ -312,7 +312,7 @@ namespace PeopleCounter_Backend.Data
     latest_log AS (
         SELECT *,
                ROW_NUMBER() OVER (
-                   PARTITION BY device_id
+                   PARTITION BY device_id, location
                    ORDER BY created_at DESC, id DESC
                ) AS rn
         FROM people_counter_log
@@ -400,7 +400,7 @@ namespace PeopleCounter_Backend.Data
     latest_log AS (
         SELECT *,
                ROW_NUMBER() OVER (
-                   PARTITION BY device_id
+                   PARTITION BY device_id, location
                    ORDER BY created_at DESC, id DESC
                ) AS rn
         FROM people_counter_log

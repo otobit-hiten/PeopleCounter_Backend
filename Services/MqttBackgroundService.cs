@@ -14,7 +14,6 @@ namespace PeopleCounter_Backend.Services
             _logger = logger;
         }
 
-
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             await Task.Yield();
@@ -23,10 +22,7 @@ namespace PeopleCounter_Backend.Services
             {
                 try
                 {
-                    if (!_mqttService.IsConnected)
-                    {
-                        await _mqttService.Connect(stoppingToken);
-                    }
+                    await _mqttService.Connect(stoppingToken);
                     await Task.Delay(5000, stoppingToken);
                 }
                 catch (OperationCanceledException)

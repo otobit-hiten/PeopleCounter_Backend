@@ -9,7 +9,6 @@ namespace PeopleCounter_Backend.Services
         private readonly SensorCacheService _sensorCache;
         private readonly ILogger<SensorHealthService> _logger;
 
-        // Limit concurrent sensor checks to avoid thundering-herd DB/network spikes
         private readonly SemaphoreSlim _throttle = new(10, 10);
 
         public SensorHealthService(
@@ -62,7 +61,7 @@ namespace PeopleCounter_Backend.Services
             if (hasRecentData)
             {
                 status = SensorStatus.Online;
-                _logger.LogInformation("Sensor {Device} → ONLINE (recent data)", sensor.Device);
+                _logger.LogDebug("Sensor {Device} → ONLINE (recent data)", sensor.Device);
             }
             else
             {
@@ -71,7 +70,7 @@ namespace PeopleCounter_Backend.Services
                 if (pingSuccess)
                 {
                     status = SensorStatus.Idle;
-                    _logger.LogInformation(
+                    _logger.LogDebug(
                         "Sensor {Device} → IDLE (no recent data but ping OK)", sensor.Device);
                 }
                 else

@@ -1,4 +1,4 @@
-﻿using PeopleCounter_Backend.Models;
+using PeopleCounter_Backend.Models;
 using System.Collections.Concurrent;
 
 namespace PeopleCounter_Backend.Services
@@ -10,9 +10,7 @@ namespace PeopleCounter_Backend.Services
         private readonly ILogger<SensorCacheService> _logger;
         private volatile bool _initialized = false;
         private readonly SemaphoreSlim _initLock = new(1, 1);
-        // Protects mutation of individual Sensor objects — ConcurrentDictionary only
-        // guards add/remove, not field writes on the contained objects.
-        private readonly object _sensorMutateLock = new();
+        private readonly SemaphoreSlim _insertLock = new(1, 1);
 
         public SensorCacheService(
             IServiceScopeFactory scopeFactory,
@@ -43,6 +41,11 @@ namespace PeopleCounter_Backend.Services
                 _initialized = true;
                 _logger.LogInformation("Sensor cache initialized with {Count} sensors", sensors.Count);
             }
+            catch
+            {
+                _cache.Clear();
+                throw;
+            }
             finally
             {
                 _initLock.Release();
@@ -54,9 +57,7 @@ namespace PeopleCounter_Backend.Services
             return _cache.TryGetValue(deviceId, out sensor);
         }
 
-        // Returns Values directly — no List allocation on every call
-        public ICollection<Sensor> GetAll() => _cache.Values;
-
+        public IReadOnlyCollection<Sensor> GetAll() => _cache.Values.ToList();
 
         public async Task<Sensor?> EnsureSensorExistsAsync(string deviceId, string location, string ipAddress)
         {
@@ -65,39 +66,54 @@ namespace PeopleCounter_Backend.Services
             if (_cache.TryGetValue(deviceId, out var existing))
                 return existing;
 
-            using var scope = _scopeFactory.CreateScope();
-            var repo = scope.ServiceProvider.GetRequiredService<SensorRepository>();
-            await repo.InsertIfNotExistsAsync(deviceId, location, ipAddress);
-            var sensor = await repo.GetByDeviceAsync(deviceId);
-
-            if (sensor != null)
+            await _insertLock.WaitAsync();
+            try
             {
-                _cache[deviceId] = sensor;
-                _logger.LogInformation(
-                    "New sensor discovered and cached: {DeviceId} at {Location} ({Ip})",
-                    deviceId, location, ipAddress);
-            }
-            else
-            {
-                _logger.LogWarning(
-                    "Sensor {DeviceId} not found after insert — possible DB issue.", deviceId);
-            }
+                if (_cache.TryGetValue(deviceId, out existing))
+                    return existing;
 
-            return sensor;
+                using var scope = _scopeFactory.CreateScope();
+                var repo = scope.ServiceProvider.GetRequiredService<SensorRepository>();
+                await repo.InsertIfNotExistsAsync(deviceId, location, ipAddress);
+                var sensor = await repo.GetByDeviceAsync(deviceId);
+
+                if (sensor != null)
+                {
+                    _cache[deviceId] = sensor;
+                    _logger.LogDebug(
+                        "New sensor discovered and cached: {DeviceId} at {Location} ({Ip})",
+                        deviceId, location, ipAddress);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Sensor {DeviceId} not found after insert — possible DB issue.", deviceId);
+                }
+
+                return sensor;
+            }
+            finally
+            {
+                _insertLock.Release();
+            }
         }
 
         public void UpdateStatus(string deviceId, SensorStatus status, DateTime? lastSeen)
         {
-            if (_cache.TryGetValue(deviceId, out var sensor))
+            if (!_cache.TryGetValue(deviceId, out var existing)) return;
+
+            var updated = new Sensor
             {
-                lock (_sensorMutateLock)
-                {
-                    sensor.Status = status;
-                    sensor.IsOnline = status == SensorStatus.Online;
-                    if (lastSeen.HasValue)
-                        sensor.LastSeen = lastSeen.Value;
-                }
-            }
+                Id        = existing.Id,
+                Device    = existing.Device,
+                Location  = existing.Location,
+                IpAddress = existing.IpAddress,
+                Status    = status,
+                IsOnline  = status == SensorStatus.Online,
+                LastSeen  = lastSeen ?? existing.LastSeen
+            };
+
+            _cache[deviceId] = updated;
         }
     }
 }
